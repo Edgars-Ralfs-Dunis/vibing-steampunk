@@ -261,7 +261,19 @@ func parseActivationResult(data []byte) (*ActivationResult, error) {
 		}
 	}
 
-	for _, entry := range resp.Inactive.Entries {
+	// The same holds for the inactive-objects list. A preaudit answer on 7.50
+	// arrives with <ioc:inactiveObjects> as the document root, and that shape is
+	// exactly the one that must trigger the second activation phase — read as
+	// "nothing inactive", the confirm never fires and the class stays at version 0.
+	entries := resp.Inactive.Entries
+	if len(entries) == 0 {
+		var root inactiveObjects
+		if err := xml.Unmarshal(data, &root); err == nil {
+			entries = root.Entries
+		}
+	}
+
+	for _, entry := range entries {
 		if entry.Object != nil {
 			result.Success = false
 			result.Inactive = append(result.Inactive, InactiveObject{
