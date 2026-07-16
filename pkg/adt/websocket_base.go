@@ -21,12 +21,13 @@ import (
 // BaseWebSocketClient provides common WebSocket functionality for ZADT_VSP connections.
 // Embed this in domain-specific clients (Debug, AMDP, etc.).
 type BaseWebSocketClient struct {
-	baseURL  string
-	client   string
-	user     string
-	password string
-	cookies  map[string]string
-	insecure bool
+	baseURL    string
+	client     string
+	user       string
+	password   string
+	cookies    map[string]string
+	insecure   bool
+	clientCert *tls.Certificate // when set, mTLS client-cert auth (no basic auth)
 
 	conn      *websocket.Conn
 	sessionID string
@@ -99,6 +100,12 @@ func NewBaseWebSocketClient(baseURL, client, user, password string, insecure boo
 	}
 }
 
+// SetClientCert enables TLS client-certificate (mTLS) auth for the WebSocket
+// bridge. When set, no basic-auth header is sent and TLS is capped at 1.2.
+func (c *BaseWebSocketClient) SetClientCert(cert *tls.Certificate) {
+	c.clientCert = cert
+}
+
 // Connect establishes WebSocket connection to ZADT_VSP.
 func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	c.mu.Lock()
@@ -124,9 +131,17 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: c.insecure,
 	}
+	if c.clientCert != nil {
+		// mTLS: present the client cert; 7.50 ICM drops TLS 1.3 client-cert handshakes
+		tlsConfig.Certificates = []tls.Certificate{*c.clientCert}
+		tlsConfig.MaxVersion = tls.VersionTLS12
+	}
 
 	header := http.Header{}
-	c.applyAuth(header)
+	if c.clientCert == nil {
+		// no basic auth in cert mode — the certificate authenticates the user
+		c.applyAuth(header)
+	}
 
 	// Try 1: Direct Basic Auth (works on most SAP systems)
 	dialer := newWebSocketDialer(tlsConfig)

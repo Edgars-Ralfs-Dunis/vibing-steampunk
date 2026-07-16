@@ -85,6 +85,29 @@ type Config struct {
 	// UNLOCK a stateless probe without the cookie retires the context.
 	// Also enabled via SAP_PROXY_CONTEXTID_GUARD=true.
 	ProxyContextIDGuard bool
+
+	// ClientCert, when set, is presented for TLS mutual authentication (mTLS)
+	// instead of a password. On macOS it is loaded from the keychain
+	// (LoadKeychainClientCert) so the private key never leaves the keystore.
+	ClientCert *tls.Certificate
+}
+
+// tlsClientConfig builds the TLS config for outbound connections, adding the
+// client certificate for mTLS when configured. When a client cert is present
+// the max TLS version is pinned to 1.2 — the NetWeaver 7.50 ICM drops TLS 1.3
+// client-certificate handshakes.
+func (c *Config) tlsClientConfig() *tls.Config {
+	t := &tls.Config{InsecureSkipVerify: c.InsecureSkipVerify}
+	if c.ClientCert != nil {
+		t.Certificates = []tls.Certificate{*c.ClientCert}
+		t.MaxVersion = tls.VersionTLS12
+	}
+	return t
+}
+
+// HasClientCert reports whether TLS client-certificate auth is configured.
+func (c *Config) HasClientCert() bool {
+	return c.ClientCert != nil
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -155,6 +178,13 @@ func WithTimeout(d time.Duration) Option {
 func WithCookies(cookies map[string]string) Option {
 	return func(c *Config) {
 		c.Cookies = cookies
+	}
+}
+
+// WithClientCert sets a TLS client certificate for mutual-auth (mTLS) login.
+func WithClientCert(cert *tls.Certificate) Option {
+	return func(c *Config) {
+		c.ClientCert = cert
 	}
 }
 
@@ -304,10 +334,8 @@ func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.InsecureSkipVerify,
-		},
+		Proxy:           http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
+		TLSClientConfig: c.tlsClientConfig(),
 	}
 
 	client := &http.Client{
