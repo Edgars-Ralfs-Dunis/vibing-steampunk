@@ -1008,7 +1008,21 @@ func (c *Client) DebuggerAttach(ctx context.Context, debuggeeID string, user str
 // This releases the debuggee and ends the debugging session.
 func (c *Client) DebuggerDetach(ctx context.Context) error {
 	_, err := c.DebuggerStep(ctx, DebugTerminate, "")
+	if err != nil && isDebuggeeGone(err) {
+		// the debuggee already finished (stepped off the end, or terminated on
+		// its own) — nothing left to detach from, which is what detach wanted
+		return nil
+	}
 	return err
+}
+
+// isDebuggeeGone reports whether an ADT debugger error means the debuggee no
+// longer exists (already ended/disconnected) rather than a real failure.
+func isDebuggeeGone(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "debuggeeEnded") ||
+		strings.Contains(s, "DBGSESSIONEND") ||
+		strings.Contains(s, "SLAVENOTCONN")
 }
 
 // DebuggerStep performs a step operation in the debugger.

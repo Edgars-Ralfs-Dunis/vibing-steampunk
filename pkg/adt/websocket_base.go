@@ -126,7 +126,11 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 			c.mu.Unlock()
 			return fmt.Errorf("WebSocket connection failed (HTTP 401), pre-auth setup error: %w", authErr)
 		}
-		authReq.SetBasicAuth(c.user, c.password)
+		if c.clientCert == nil {
+			// cert mode: the TLS client cert on preAuthClient authenticates the
+			// user; a basic-auth header with the empty password would 401.
+			authReq.SetBasicAuth(c.user, c.password)
+		}
 
 		authResp, authErr := preAuthClient.Do(authReq)
 		if authErr != nil {
@@ -149,6 +153,14 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	if err != nil {
 		c.mu.Unlock()
 		if resp != nil {
+			// surface the server's error body — SAP's HTML error page names the
+			// real cause (wrong subprotocol, SICF logon config, ...) and is
+			// otherwise thrown away
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			resp.Body.Close()
+			if len(body) > 0 {
+				return fmt.Errorf("WebSocket connection failed (HTTP %d): %w — server response: %s", resp.StatusCode, err, string(body))
+			}
 			return fmt.Errorf("WebSocket connection failed (HTTP %d): %w", resp.StatusCode, err)
 		}
 		return fmt.Errorf("WebSocket connection failed: %w", err)
