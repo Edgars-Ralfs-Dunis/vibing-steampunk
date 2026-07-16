@@ -87,7 +87,7 @@ func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRe
 
 		// Auto-convert class names to pool format (ZCL_TEST → ZCL_TEST================CP)
 		originalProgram := program
-		program = convertToClassPool(program)
+		program = s.toDebugProgramName(ctx, program)
 
 		// Use method-aware breakpoint if method is specified
 		if method != "" {
@@ -165,38 +165,47 @@ func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRe
 	return mcp.NewToolResultText(msg.String()), nil
 }
 
-// convertToClassPool converts class/interface names to pool format for debugging.
-// Example: ZCL_TEST → ZCL_TEST================CP (padded to 30 chars + CP suffix)
-func convertToClassPool(program string) string {
+// toDebugProgramName resolves a user-supplied name to the program name the ABAP
+// debugger expects: classes must be given as their pool (ZCL_TEST=========CP),
+// everything else is passed through untouched.
+//
+// It asks the system rather than pattern-matching the name, because the name
+// genuinely does not tell you: ZADT_CL_TADIR_MOVE is a class and ZADT_DBG_PROG is
+// a program. The previous prefix heuristic (ZCL_/YCL_/ZIF_/...) silently missed
+// SAP-standard classes (CL_*) and any Z class not named ZCL_*, sending a bare
+// class name to SAP, which rejects it with the misleading
+// "You can only set breakpoints in an active, unchanged source".
+//
+// If the lookup fails (object not a class, or ADT unreachable) the name is passed
+// through, which is exactly the old behaviour — so this can only widen what works.
+func (s *Server) toDebugProgramName(ctx context.Context, program string) string {
 	program = strings.ToUpper(program)
 
-	// Already in pool format
-	if strings.HasSuffix(program, "CP") && strings.Contains(program, "=") {
+	if isClassPool(program) {
 		return program
 	}
-
-	// Check if it looks like a class or interface name
-	isClass := strings.HasPrefix(program, "ZCL_") ||
-		strings.HasPrefix(program, "YCL_") ||
-		strings.HasPrefix(program, "ZIF_") ||
-		strings.HasPrefix(program, "YIF_") ||
-		strings.HasPrefix(program, "LCL_") ||
-		strings.HasPrefix(program, "LIF_") ||
-		strings.Contains(program, "/CL_") ||
-		strings.Contains(program, "/IF_")
-
-	if !isClass {
+	// Class names are max 30 chars; anything longer cannot be one.
+	if len(program) > 30 {
 		return program
 	}
-
-	// Pad to 30 chars with '=' and add 'CP' suffix
-	// Total length: 30 + 2 = 32 (standard ABAP class pool naming)
-	if len(program) < 30 {
-		padding := 30 - len(program)
-		program = program + strings.Repeat("=", padding) + "CP"
+	if _, err := s.adtClient.GetClass(ctx, program); err != nil {
+		return program
 	}
+	return classPoolName(program)
+}
 
-	return program
+// isClassPool reports whether name is already in pool form (…====CP).
+func isClassPool(name string) bool {
+	return strings.HasSuffix(name, "CP") && strings.Contains(name, "=")
+}
+
+// classPoolName builds the ABAP class pool name: the class name padded to 30
+// chars with '=', then a "CP" suffix (32 total).
+func classPoolName(class string) string {
+	if len(class) > 30 {
+		return class
+	}
+	return class + strings.Repeat("=", 30-len(class)) + "CP"
 }
 
 func (s *Server) handleGetBreakpoints(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

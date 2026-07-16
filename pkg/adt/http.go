@@ -24,6 +24,11 @@ type Transport struct {
 	config     *Config
 	httpClient HTTPDoer
 
+	// longPollClient serves requests with RequestOptions.LongPoll set. It shares
+	// this transport's cookie jar and TLS config and differs only in having no
+	// client-level timeout, so long-polls are bounded by their request context.
+	longPollClient HTTPDoer
+
 	// CSRF token management
 	csrfToken string
 	csrfMu    sync.RWMutex
@@ -35,9 +40,21 @@ type Transport struct {
 
 // NewTransport creates a new Transport with the given configuration.
 func NewTransport(cfg *Config) *Transport {
+	client := cfg.NewHTTPClient()
+
+	// http.Client.Timeout is a hard ceiling that a longer request context cannot
+	// lift, so a 60s default silently caps every long-poll (the debugger listener
+	// asks for up to 240s). Shallow-copy the client to keep the same Jar and
+	// Transport — a second NewHTTPClient() would get its own cookie jar and lose
+	// the session — and drop the timeout; LongPoll callers must pass a context
+	// deadline instead.
+	longPoll := *client
+	longPoll.Timeout = 0
+
 	return &Transport{
-		config:     cfg,
-		httpClient: cfg.NewHTTPClient(),
+		config:         cfg,
+		httpClient:     client,
+		longPollClient: &longPoll,
 	}
 }
 
@@ -45,8 +62,9 @@ func NewTransport(cfg *Config) *Transport {
 // This is useful for testing with mock HTTP clients.
 func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
 	return &Transport{
-		config:     cfg,
-		httpClient: client,
+		config:         cfg,
+		httpClient:     client,
+		longPollClient: client,
 	}
 }
 
@@ -70,6 +88,11 @@ type RequestOptions struct {
 	// where the lock handle is bound to a specific server-side session.
 	// When set, X-sap-adt-sessiontype header is set to "stateful" for this request.
 	Stateful bool
+
+	// LongPoll routes this request through a client with no timeout, for
+	// server-side long-polling (the debugger listener). The caller MUST bound it
+	// with a context deadline.
+	LongPoll bool
 }
 
 // Response wraps an HTTP response with convenience methods.
@@ -132,7 +155,11 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	}
 
 	// Execute request
-	resp, err := t.httpClient.Do(req)
+	doer := t.httpClient
+	if opts.LongPoll && t.longPollClient != nil {
+		doer = t.longPollClient
+	}
+	resp, err := doer.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
