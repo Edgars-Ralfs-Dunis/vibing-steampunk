@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -247,7 +248,12 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 		}
 	}
 	if allPseudo {
-		result, err := s.adtClient.DebuggerGetChildVariables(ctx, variableIDs)
+		// expanding a group the debugger did not offer at the current position
+		// has been observed to hang past every client timeout — bound it so the
+		// tool call errors instead of blocking the agent (see drafts/ bundle)
+		expandCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		result, err := s.adtClient.DebuggerGetChildVariables(expandCtx, variableIDs)
 		if err != nil {
 			return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
 		}
