@@ -152,7 +152,8 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 	user := os.Getenv("SAP_USER")
 	password := os.Getenv("SAP_PASSWORD")
 
-	// mTLS: SAP_CLIENT_CERT_CN loads a macOS keychain identity by CN (no password)
+	// mTLS: SAP_CLIENT_CERT_CN (by CN) or SAP_CLIENT_CERT_ISSUER (freshest valid
+	// cert from that CA) loads a macOS keychain identity — no password.
 	var clientCert *tls.Certificate
 	if certCN := os.Getenv("SAP_CLIENT_CERT_CN"); certCN != "" {
 		c, err := adt.LoadKeychainClientCert(certCN)
@@ -160,11 +161,17 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			return nil, fmt.Errorf("client cert (CN=%s): %w", certCN, err)
 		}
 		clientCert = c
-		if user == "" {
-			user = certCN // effective SAP user = cert CN
+	} else if certIss := os.Getenv("SAP_CLIENT_CERT_ISSUER"); certIss != "" {
+		c, err := adt.LoadKeychainClientCertByIssuer(certIss)
+		if err != nil {
+			return nil, fmt.Errorf("client cert (issuer=%s): %w", certIss, err)
 		}
+		clientCert = c
 	} else if user == "" || password == "" {
-		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_CLIENT_CERT_CN for mTLS)")
+		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_CLIENT_CERT_CN / SAP_CLIENT_CERT_ISSUER for mTLS)")
+	}
+	if clientCert != nil && user == "" && clientCert.Leaf != nil {
+		user = clientCert.Leaf.Subject.CommonName // effective SAP user = cert CN
 	}
 
 	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
