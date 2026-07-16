@@ -719,9 +719,9 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("DebuggerGetVariables") {
 		s.mcpServer.AddTool(mcp.NewTool("DebuggerGetVariables",
-			mcp.WithDescription("Get variable values during a debug session. Use '@ROOT' to get top-level variables, or specific variable IDs to get their values."),
+			mcp.WithDescription("Get variable values during a debug session. '@'-prefixed IDs are group nodes that expand to their children ('@ROOT' lists the top-level groups like '@LOCALS'/'@GLOBALS'; pass those to drill down). Plain names fetch concrete variable values."),
 			mcp.WithArray("variable_ids",
-				mcp.Description("Variable IDs to retrieve (e.g., ['@ROOT'] for top-level, or specific IDs like ['LV_COUNT', 'LS_DATA'])"),
+				mcp.Description("Variable IDs to retrieve (e.g., ['@ROOT'] then ['@LOCALS'] to drill into locals, or concrete names like ['LV_COUNT', 'SY-SUBRC'])"),
 				mcp.Items(map[string]interface{}{"type": "string"}),
 			),
 		), s.handleDebuggerGetVariables)
