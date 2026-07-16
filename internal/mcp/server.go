@@ -55,6 +55,10 @@ type Config struct {
 	// a password. On macOS it is loaded from the keychain in main.go.
 	ClientCert *tls.Certificate
 
+	// ClientCertProvider resolves the cert lazily per TLS handshake (wins over
+	// ClientCert): the server stays up without a cert and heals after SLC login.
+	ClientCertProvider func() (*tls.Certificate, error)
+
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
 
@@ -118,7 +122,9 @@ func NewServer(cfg *Config) *Server {
 	if cfg.InsecureSkipVerify {
 		opts = append(opts, adt.WithInsecureSkipVerify())
 	}
-	if cfg.ClientCert != nil {
+	if cfg.ClientCertProvider != nil {
+		opts = append(opts, adt.WithClientCertProvider(cfg.ClientCertProvider))
+	} else if cfg.ClientCert != nil {
 		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
 	}
 	if len(cfg.Cookies) > 0 {
@@ -251,7 +257,9 @@ func (s *Server) ensureWSConnected(ctx context.Context, toolName string) *mcp.Ca
 		s.amdpWSClient = adt.NewAMDPWebSocketClient(
 			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 		)
-		if s.config.ClientCert != nil {
+		if s.config.ClientCertProvider != nil {
+			s.amdpWSClient.SetClientCertProvider(s.config.ClientCertProvider)
+		} else if s.config.ClientCert != nil {
 			s.amdpWSClient.SetClientCert(s.config.ClientCert)
 		}
 		if err := s.amdpWSClient.Connect(ctx); err != nil {
