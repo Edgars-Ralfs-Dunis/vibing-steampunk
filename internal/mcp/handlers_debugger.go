@@ -49,6 +49,11 @@ func (s *Server) ensureDebugWSClient(ctx context.Context) error {
 		s.config.Password,
 		s.config.InsecureSkipVerify,
 	)
+	if s.config.ClientCert != nil {
+		// cert mode: without this the dial falls back to basic auth with an
+		// empty password and the bridge 401s (same wiring as the AMDP client)
+		s.debugWSClient.SetClientCert(s.config.ClientCert)
+	}
 
 	return s.debugWSClient.Connect(ctx)
 }
