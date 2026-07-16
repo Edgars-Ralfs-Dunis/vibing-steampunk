@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"sync"
@@ -49,6 +50,10 @@ type Config struct {
 	Client             string
 	Language           string
 	InsecureSkipVerify bool
+
+	// ClientCert, when set, is presented for TLS mutual auth (mTLS) instead of
+	// a password. On macOS it is loaded from the keychain in main.go.
+	ClientCert *tls.Certificate
 
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
@@ -119,6 +124,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.InsecureSkipVerify {
 		opts = append(opts, adt.WithInsecureSkipVerify())
+	}
+	if cfg.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
 	}
 	if len(cfg.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(cfg.Cookies))
@@ -253,6 +261,9 @@ func (s *Server) ensureWSConnected(ctx context.Context, toolName string) *mcp.Ca
 		s.amdpWSClient = adt.NewAMDPWebSocketClient(
 			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 		)
+		if s.config.ClientCert != nil {
+			s.amdpWSClient.SetClientCert(s.config.ClientCert)
+		}
 		if err := s.amdpWSClient.Connect(ctx); err != nil {
 			s.amdpWSClient = nil
 			return newToolResultError(fmt.Sprintf("%s: WebSocket connect failed: %v", toolName, err))

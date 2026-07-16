@@ -25,6 +25,10 @@ var (
 
 var cfg = &mcp.Config{}
 
+// clientCertCN is the macOS keychain identity Common Name to present for TLS
+// client-certificate (mTLS) auth, from --client-cert-cn or SAP_CLIENT_CERT_CN.
+var clientCertCN string
+
 var rootCmd = &cobra.Command{
 	Use:   "vsp",
 	Short: "ABAP Development Tools for AI agents and DevOps",
@@ -101,6 +105,7 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.Client, "client", "001", "SAP client number")
 	rootCmd.Flags().StringVar(&cfg.Language, "language", "EN", "SAP language")
 	rootCmd.Flags().BoolVar(&cfg.InsecureSkipVerify, "insecure", false, "Skip TLS certificate verification")
+	rootCmd.Flags().StringVar(&clientCertCN, "client-cert-cn", "", "macOS keychain identity CN to present for TLS client-cert (mTLS) auth instead of a password")
 
 	// Cookie authentication
 	rootCmd.Flags().String("cookie-file", "", "Path to cookie file in Netscape format")
@@ -207,6 +212,22 @@ func init() {
 func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
+
+	// Client-certificate (mTLS) auth: load the macOS keychain identity by CN and
+	// present it instead of a password. The private key never leaves the keychain.
+	if clientCertCN != "" {
+		cert, err := adt.LoadKeychainClientCert(clientCertCN)
+		if err != nil {
+			return fmt.Errorf("client cert (CN=%s): %w", clientCertCN, err)
+		}
+		cfg.ClientCert = cert
+		if cfg.Username == "" {
+			cfg.Username = clientCertCN // effective SAP user = cert CN (terminal ID, etc.)
+		}
+		if cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "[vsp] mTLS: presenting keychain certificate CN=%s (no password)\n", clientCertCN)
+		}
+	}
 
 	// Validate configuration
 	if err := validateConfig(); err != nil {
@@ -369,6 +390,11 @@ func resolveConfig(cmd *cobra.Command) {
 	// Insecure: flag > SAP_INSECURE env
 	if !cmd.Flags().Changed("insecure") {
 		cfg.InsecureSkipVerify = viper.GetBool("INSECURE")
+	}
+
+	// Client cert CN: flag > SAP_CLIENT_CERT_CN env
+	if clientCertCN == "" {
+		clientCertCN = viper.GetString("CLIENT_CERT_CN")
 	}
 
 	// Mode: flag > SAP_MODE env > default (focused)
@@ -656,6 +682,9 @@ func processCookieAuth(cmd *cobra.Command) error {
 	// Count authentication methods
 	authMethods := 0
 	if cfg.Username != "" && cfg.Password != "" {
+		authMethods++
+	}
+	if cfg.ClientCert != nil {
 		authMethods++
 	}
 	if cookieFile != "" {
