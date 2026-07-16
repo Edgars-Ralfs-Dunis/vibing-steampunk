@@ -25,9 +25,14 @@ var (
 
 var cfg = &mcp.Config{}
 
-// clientCertCN is the macOS keychain identity Common Name to present for TLS
-// client-certificate (mTLS) auth, from --client-cert-cn or SAP_CLIENT_CERT_CN.
-var clientCertCN string
+// clientCertCN / clientCertIssuer select a macOS keychain identity to present
+// for TLS client-certificate (mTLS) auth. CN pins one user's cert; issuer picks
+// the freshest valid cert from a given CA (e.g. the shared SLC/IAS login CA), so
+// a single shared config works for every user. CN wins if both are set.
+var (
+	clientCertCN     string
+	clientCertIssuer string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "vsp",
@@ -106,6 +111,7 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.Language, "language", "EN", "SAP language")
 	rootCmd.Flags().BoolVar(&cfg.InsecureSkipVerify, "insecure", false, "Skip TLS certificate verification")
 	rootCmd.Flags().StringVar(&clientCertCN, "client-cert-cn", "", "macOS keychain identity CN to present for TLS client-cert (mTLS) auth instead of a password")
+	rootCmd.Flags().StringVar(&clientCertIssuer, "client-cert-issuer", "", "select the macOS keychain client cert by issuer CN (freshest valid); alternative to --client-cert-cn for a shared config")
 
 	// Cookie authentication
 	rootCmd.Flags().String("cookie-file", "", "Path to cookie file in Netscape format")
@@ -202,19 +208,27 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
-	// Client-certificate (mTLS) auth: load the macOS keychain identity by CN and
-	// present it instead of a password. The private key never leaves the keychain.
+	// Client-certificate (mTLS) auth: load a macOS keychain identity and present
+	// it instead of a password. The private key never leaves the keychain.
 	if clientCertCN != "" {
 		cert, err := adt.LoadKeychainClientCert(clientCertCN)
 		if err != nil {
 			return fmt.Errorf("client cert (CN=%s): %w", clientCertCN, err)
 		}
 		cfg.ClientCert = cert
-		if cfg.Username == "" {
-			cfg.Username = clientCertCN // effective SAP user = cert CN (terminal ID, etc.)
+	} else if clientCertIssuer != "" {
+		cert, err := adt.LoadKeychainClientCertByIssuer(clientCertIssuer)
+		if err != nil {
+			return fmt.Errorf("client cert (issuer=%s): %w", clientCertIssuer, err)
+		}
+		cfg.ClientCert = cert
+	}
+	if cfg.ClientCert != nil {
+		if cfg.Username == "" && cfg.ClientCert.Leaf != nil {
+			cfg.Username = cfg.ClientCert.Leaf.Subject.CommonName // effective SAP user = cert CN
 		}
 		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "[vsp] mTLS: presenting keychain certificate CN=%s (no password)\n", clientCertCN)
+			fmt.Fprintf(os.Stderr, "[vsp] mTLS: keychain certificate (user=%s), no password\n", cfg.Username)
 		}
 	}
 
@@ -365,9 +379,12 @@ func resolveConfig(cmd *cobra.Command) {
 		cfg.InsecureSkipVerify = viper.GetBool("INSECURE")
 	}
 
-	// Client cert CN: flag > SAP_CLIENT_CERT_CN env
+	// Client cert selectors: flag > SAP_CLIENT_CERT_CN / SAP_CLIENT_CERT_ISSUER env
 	if clientCertCN == "" {
 		clientCertCN = viper.GetString("CLIENT_CERT_CN")
+	}
+	if clientCertIssuer == "" {
+		clientCertIssuer = viper.GetString("CLIENT_CERT_ISSUER")
 	}
 
 	// Mode: flag > SAP_MODE env > default (focused)
