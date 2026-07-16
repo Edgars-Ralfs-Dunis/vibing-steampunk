@@ -162,7 +162,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		}
 		clientCert = c
 	} else if certIss := os.Getenv("SAP_CLIENT_CERT_ISSUER"); certIss != "" {
-		c, err := adt.LoadKeychainClientCertByIssuer(certIss)
+		c, err := adt.LoadKeychainClientCertByIssuers(splitTrimCLI(certIss))
 		if err != nil {
 			return nil, fmt.Errorf("client cert (issuer=%s): %w", certIss, err)
 		}
@@ -643,4 +643,15 @@ var systemsInitCmd = &cobra.Command{
 		fmt.Println("Set passwords via environment variables: VSP_<SYSTEM>_PASSWORD")
 		return nil
 	},
+}
+
+// splitTrimCLI splits a comma-separated issuer list (see SAP_CLIENT_CERT_ISSUER).
+func splitTrimCLI(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

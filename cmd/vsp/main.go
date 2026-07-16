@@ -14,6 +14,7 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"crypto/tls"
 )
 
 var (
@@ -226,31 +227,55 @@ func init() {
 	viper.SetEnvPrefix("SAP")
 }
 
+
+// splitTrim splits a comma-separated list, trimming whitespace and dropping
+// empty entries.
+func splitTrim(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
-	// Client-certificate (mTLS) auth: load a macOS keychain identity and present
-	// it instead of a password. The private key never leaves the keychain.
+	// Client-certificate (mTLS) auth: resolve a macOS keychain identity LAZILY
+	// per TLS handshake. A missing cert at startup must not kill the server —
+	// the desktop app would only show "connection failed" while the real error
+	// ("open SLC and log in") dies in a log. With lazy resolution the server
+	// stays up, every tool call returns the real error, and an SLC (re)login
+	// mid-session heals the next handshake without a restart.
+	var certLoader func() (*tls.Certificate, error)
+	var certDesc string
 	if clientCertCN != "" {
-		cert, err := adt.LoadKeychainClientCert(clientCertCN)
-		if err != nil {
-			return fmt.Errorf("client cert (CN=%s): %w", clientCertCN, err)
-		}
-		cfg.ClientCert = cert
+		cn := clientCertCN
+		certDesc = "CN=" + cn
+		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCert(cn) }
 	} else if clientCertIssuer != "" {
-		cert, err := adt.LoadKeychainClientCertByIssuer(clientCertIssuer)
-		if err != nil {
-			return fmt.Errorf("client cert (issuer=%s): %w", clientCertIssuer, err)
-		}
-		cfg.ClientCert = cert
+		// comma-separated issuer CNs: fleets often have more than one SLS/CA
+		issuers := splitTrim(clientCertIssuer)
+		certDesc = "issuer=" + strings.Join(issuers, " | ")
+		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCertByIssuers(issuers) }
 	}
-	if cfg.ClientCert != nil {
-		if cfg.Username == "" && cfg.ClientCert.Leaf != nil {
-			cfg.Username = cfg.ClientCert.Leaf.Subject.CommonName // effective SAP user = cert CN
-		}
-		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "[vsp] mTLS: keychain certificate (user=%s), no password\n", cfg.Username)
+	if certLoader != nil {
+		provider := adt.NewCachingCertProvider(certLoader)
+		cfg.ClientCertProvider = provider
+		// Eager best-effort resolve: derives the effective username (cert CN)
+		// and gives immediate feedback — but failure is a warning, not an exit.
+		if cert, err := provider(); err == nil {
+			if cfg.Username == "" && cert.Leaf != nil {
+				cfg.Username = cert.Leaf.Subject.CommonName // effective SAP user = cert CN
+			}
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[vsp] mTLS: keychain certificate (user=%s), no password\n", cfg.Username)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[vsp] WARNING: client cert (%s) not available yet: %v\n[vsp] serving anyway — tool calls will fail with this error until SLC is logged in\n", certDesc, err)
 		}
 	}
 
@@ -792,7 +817,7 @@ func processCookieAuth(cmd *cobra.Command) error {
 	if cfg.Username != "" && cfg.Password != "" {
 		authMethods++
 	}
-	if cfg.ClientCert != nil {
+	if cfg.ClientCert != nil || cfg.ClientCertProvider != nil {
 		authMethods++
 	}
 	if cookieFile != "" {
