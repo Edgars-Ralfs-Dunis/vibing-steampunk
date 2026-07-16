@@ -1127,7 +1127,9 @@ func TestDebuggerGetStack_Mock(t *testing.T) {
 			return
 		}
 
-		if r.Method == http.MethodGet && r.URL.Path == "/sap/bc/adt/debugger/stack" {
+		// Real ADT serves getStack from /sap/bc/adt/debugger (method= query param);
+		// /sap/bc/adt/debugger/stack 404s "No suitable resource found" on 7.50.
+		if r.Method == http.MethodPost && r.URL.Path == "/sap/bc/adt/debugger" && r.URL.Query().Get("method") == "getStack" {
 			w.Header().Set("Content-Type", "application/xml")
 			w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
 <dbg:stack xmlns:dbg="http://www.sap.com/adt/debugger"
