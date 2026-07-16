@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/github/smimesign/certstore"
@@ -35,9 +36,23 @@ func LoadKeychainClientCert(cn string) (*tls.Certificate, error) {
 // if several match). This lets a shared config select "the SLC/IAS login cert"
 // generically — each user's own cert is picked without a per-user CN.
 func LoadKeychainClientCertByIssuer(issuerCN string) (*tls.Certificate, error) {
+	return LoadKeychainClientCertByIssuers([]string{issuerCN})
+}
+
+// LoadKeychainClientCertByIssuers is LoadKeychainClientCertByIssuer for a set
+// of acceptable issuer CNs (org fleets often have more than one Secure Login
+// Server / CA in play). The freshest valid identity across all of them wins.
+func LoadKeychainClientCertByIssuers(issuerCNs []string) (*tls.Certificate, error) {
 	return loadKeychainIdentity(
-		fmt.Sprintf("Issuer CN=%q", issuerCN),
-		func(c *x509.Certificate) bool { return c.Issuer.CommonName == issuerCN },
+		fmt.Sprintf("Issuer CN in %q", issuerCNs),
+		func(c *x509.Certificate) bool {
+			for _, cn := range issuerCNs {
+				if c.Issuer.CommonName == cn {
+					return true
+				}
+			}
+			return false
+		},
 	)
 }
 
@@ -58,8 +73,17 @@ func loadKeychainIdentity(desc string, pred func(*x509.Certificate) bool) (*tls.
 	now := time.Now()
 	var best certstore.Identity
 	var bestLeaf *x509.Certificate
+	var seen []string // what IS in the keychain, for the no-match error
 	for _, id := range idents {
 		crt, err := id.Certificate()
+		if err == nil && len(seen) < 10 {
+			state := "valid"
+			if now.After(crt.NotAfter) {
+				state = "EXPIRED " + crt.NotAfter.Format("2006-01-02 15:04")
+			}
+			seen = append(seen, fmt.Sprintf("Subject CN=%q Issuer CN=%q (%s)",
+				crt.Subject.CommonName, crt.Issuer.CommonName, state))
+		}
 		if err != nil || !pred(crt) || now.Before(crt.NotBefore) || now.After(crt.NotAfter) {
 			id.Close()
 			continue
@@ -76,7 +100,11 @@ func loadKeychainIdentity(desc string, pred func(*x509.Certificate) bool) (*tls.
 
 	if best == nil {
 		store.Close()
-		return nil, fmt.Errorf("no valid (unexpired) keychain identity matching %s found — open SLC and log in", desc)
+		detail := "keychain has no identities at all"
+		if len(seen) > 0 {
+			detail = "keychain identities present: " + strings.Join(seen, "; ")
+		}
+		return nil, fmt.Errorf("no valid (unexpired) keychain identity matching %s found — open SLC and log in (wrong SLS profile? %s)", desc, detail)
 	}
 
 	chain, err := best.CertificateChain()
