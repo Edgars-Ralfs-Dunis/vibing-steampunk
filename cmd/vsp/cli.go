@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strings"
@@ -40,6 +41,7 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+	ClientCert   *tls.Certificate // mTLS client cert (macOS keychain), no password
 
 	// Auth names the authentication method ("sso" for browser single sign-on).
 	Auth string
@@ -149,8 +151,20 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 
 	user := os.Getenv("SAP_USER")
 	password := os.Getenv("SAP_PASSWORD")
-	if user == "" || password == "" {
-		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required")
+
+	// mTLS: SAP_CLIENT_CERT_CN loads a macOS keychain identity by CN (no password)
+	var clientCert *tls.Certificate
+	if certCN := os.Getenv("SAP_CLIENT_CERT_CN"); certCN != "" {
+		c, err := adt.LoadKeychainClientCert(certCN)
+		if err != nil {
+			return nil, fmt.Errorf("client cert (CN=%s): %w", certCN, err)
+		}
+		clientCert = c
+		if user == "" {
+			user = certCN // effective SAP user = cert CN
+		}
+	} else if user == "" || password == "" {
+		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_CLIENT_CERT_CN for mTLS)")
 	}
 
 	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
@@ -163,6 +177,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		URL:                url,
 		User:               user,
 		Password:           password,
+		ClientCert:         clientCert,
 		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
 		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
 		Insecure:           os.Getenv("SAP_INSECURE") == "true",
@@ -255,6 +270,9 @@ func getClient(params *systemParams) (*adt.Client, error) {
 	if params.Insecure {
 		opts = append(opts, adt.WithInsecureSkipVerify())
 	}
+	if params.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(params.ClientCert))
+	}
 
 	// Browser single sign-on: cookies are fetched on demand and refreshed
 	// automatically, so this is checked before the static cookie sources.
@@ -327,6 +345,9 @@ func getWSClient(ctx context.Context, params *systemParams) (*adt.AMDPWebSocketC
 		params.Password,
 		params.Insecure,
 	)
+	if params.ClientCert != nil {
+		wsClient.SetClientCert(params.ClientCert)
+	}
 
 	// A system reached through single sign-on has no password to offer, and the
 	// upgrade request carries a cookie as readily as any other.
