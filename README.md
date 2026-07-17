@@ -1,5 +1,17 @@
 # Vibing Steampunk (vsp)
 
+> ## 🛠️ Zalaris fork — get the binary here
+>
+> This is the Zalaris fork of [oisee/vibing-steampunk](https://github.com/oisee/vibing-steampunk). It adds the `actfix` activation fix, macOS keychain (SLC certificate) mTLS auth, and a batch of debugger fixes on top of `v2.38.1`. **Download the macOS (Apple Silicon) binary from _this_ repo's releases, not upstream's:**
+>
+> ```bash
+> mkdir -p ~/.zed-adt && curl -sL -o ~/.zed-adt/vsp-darwin-arm64 \
+>   https://github.com/Edgars-Ralfs-Dunis/vibing-steampunk/releases/latest/download/vsp-darwin-arm64 \
+>   && chmod +x ~/.zed-adt/vsp-darwin-arm64 && ~/.zed-adt/vsp-darwin-arm64 --version
+> ```
+>
+> For ZED at Zalaris, the turnkey path is the `zed-adt` Claude Code plugin / desktop `.mcpb` (bundles this binary, zero config). The download links elsewhere in this README point at upstream and give the un-fixed build.
+
 **AI-Agentic Development Unlocked for ABAP** — ECC, S/4HANA, everywhere ADT is available.
 
 > **ADT ↔ MCP Bridge**: Gives Claude (and other AI assistants) full access to SAP ADT APIs.
