@@ -1,5 +1,17 @@
 # Vibing Steampunk (vsp)
 
+> ## 🛠️ Zalaris fork — get the binary here
+>
+> This is the Zalaris fork of [oisee/vibing-steampunk](https://github.com/oisee/vibing-steampunk), rebased on upstream **v2.54.0**. On top of it: macOS keychain (SLC certificate) mTLS auth, dynamic SAP-client selection with a pooled `ZADT_VSP` bridge per client, `ResetBridge`, the two-phase activation round-trip, and a `ZADT_VSP` report domain that runs and captures reports inside the job (`ZVSP_RUN_CAPTURE`). **Download the macOS (Apple Silicon) binary from _this_ repo's releases, not upstream's:**
+>
+> ```bash
+> mkdir -p ~/.zed-adt && curl -sL -o ~/.zed-adt/vsp-darwin-arm64 \
+>   https://github.com/Edgars-Ralfs-Dunis/vibing-steampunk/releases/latest/download/vsp-darwin-arm64 \
+>   && chmod +x ~/.zed-adt/vsp-darwin-arm64 && ~/.zed-adt/vsp-darwin-arm64 --version
+> ```
+>
+> For ZED at Zalaris, the turnkey path is the `zalaris-adt` Claude Code plugin (bundles this binary, zero config). The download links elsewhere in this README point at upstream and give a build without the items above.
+
 **AI-Agentic Development Unlocked for ABAP** — any system with ADT enabled, 7.50 upwards.
 The available surface varies by release, and `vsp compat` reports it per system: RAP needs
 S/4, AMDP needs HANA, and some ADT resources present on S/4 are absent on ERP.
