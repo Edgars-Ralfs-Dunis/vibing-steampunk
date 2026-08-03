@@ -146,7 +146,8 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 		return "", err
 	}
 
-	results, err := c.SearchObject(ctx, objectName, 20)
+	// Stateful: this runs between the caller's LOCK and PUT. See searchObject.
+	results, err := c.searchObject(ctx, objectName, 20, true)
 	if err != nil {
 		return "", err
 	}
@@ -247,6 +248,22 @@ func (c *Client) AllowPackageTemporarily(pkg string) func() {
 // SearchObject searches for ABAP objects by name pattern.
 // The query parameter supports wildcards (* for multiple chars, ? for single char).
 func (c *Client) SearchObject(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	return c.searchObject(ctx, query, maxResults, false)
+}
+
+// searchObject runs a quickSearch, optionally inside the caller's ADT session.
+//
+// stateful matters when the caller already holds a lock. A stateless request
+// tells the server to drop the session context, which silently invalidates every
+// lock handle issued in it — the handle stays syntactically valid, so the next
+// call fails with "423 ... is not locked (invalid lock handle: <the handle it
+// just issued>)", which reads like a client bug rather than a dropped session.
+//
+// The mutation gate resolves an object's package between LOCK and PUT, so that
+// lookup runs mid-session and must not be stateless. Verified against ZED 050:
+// with AllowedPackages configured every write failed 423; the only difference was
+// this interleaved stateless GET.
+func (c *Client) searchObject(ctx context.Context, query string, maxResults int, stateful bool) ([]SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 100
 	}
@@ -257,9 +274,10 @@ func (c *Client) SearchObject(ctx context.Context, query string, maxResults int)
 	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/repository/informationsystem/search", &RequestOptions{
-		Method: http.MethodGet,
-		Query:  params,
-		Accept: "application/xml",
+		Method:   http.MethodGet,
+		Query:    params,
+		Accept:   "application/xml",
+		Stateful: stateful,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search request failed: %w", err)
