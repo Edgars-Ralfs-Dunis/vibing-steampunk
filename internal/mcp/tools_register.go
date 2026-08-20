@@ -219,6 +219,9 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 			mcp.WithBoolean("columns_only",
 				mcp.Description("Return only column metadata (names, types, lengths) without data rows"),
 			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to read from, e.g. \"460\". Optional: defaults to the session's active client (see SetClient). Reads only - writes always go to the configured client."),
+			),
 		), s.handleGetTableContents)
 	}
 
@@ -234,6 +237,9 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithBoolean("all_rows",
 				mcp.Description("Set true to retrieve every matching row, ignoring max_rows and the 100-row default. Prefer this over max_rows: 0 for \"all rows\" — MCP clients may not transmit 0 or negative numbers reliably; a boolean has no such ambiguity."),
+			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to read from, e.g. \"460\". Optional: defaults to the session's active client (see SetClient). Reads only - writes always go to the configured client."),
 			),
 		), s.handleRunQuery)
 	}
@@ -355,8 +361,18 @@ func (s *Server) registerSystemTools(shouldRegister func(string) bool) {
 	// GetConnectionInfo - Self-inspection tool
 	// Always registered - useful for debugging and introspection
 	s.mcpServer.AddTool(mcp.NewTool("GetConnectionInfo",
-		mcp.WithDescription("Get current MCP connection info: user, URL, client. Useful for debugging and understanding current session context."),
+		mcp.WithDescription("Get current MCP connection info: user, URL, active client and write client. Useful for debugging and understanding current session context."),
 	), s.handleGetConnectionInfo)
+
+	// SetClient - dynamic client selection for client-dependent READS.
+	// Always registered: it changes nothing about where writes go.
+	s.mcpServer.AddTool(mcp.NewTool("SetClient",
+		mcp.WithDescription("Set the SAP client that client-dependent reads (RunQuery, GetTableContents) use for the rest of this session. Repository objects - source, classes, transports, dumps - are cross-client and are unaffected. Writes ALWAYS go to the configured client and are never redirected. Ask the human which client to work in before calling this."),
+		mcp.WithString("client",
+			mcp.Required(),
+			mcp.Description("Three-digit SAP client, e.g. \"460\"."),
+		),
+	), s.handleSetClient)
 
 	// GetFeatures - Feature Detection (Safety Network)
 	// Always registered - provides visibility into what's available

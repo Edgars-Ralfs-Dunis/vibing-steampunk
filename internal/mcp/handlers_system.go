@@ -55,10 +55,11 @@ func (s *Server) handleGetInstalledComponents(ctx context.Context, request mcp.C
 func (s *Server) handleGetConnectionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Return current connection info for introspection
 	info := map[string]interface{}{
-		"user":   s.config.Username,
-		"url":    s.config.BaseURL,
-		"client": s.config.Client,
-		"mode":   s.config.Mode,
+		"user":         s.config.Username,
+		"url":          s.config.BaseURL,
+		"client":       s.ActiveClient(),
+		"write_client": s.config.Client,
+		"mode":         s.config.Mode,
 	}
 
 	// Add feature summary
@@ -127,4 +128,37 @@ func (s *Server) handleGetAbapHelp(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// handleSetClient points client-dependent reads at a different SAP client for
+// the rest of the session. Writes are unaffected: no write handler resolves
+// through the client pool.
+func (s *Server) handleSetClient(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	client, _ := request.GetArguments()["client"].(string)
+	if client == "" {
+		return newToolResultError("client is required"), nil
+	}
+	if err := s.SetActiveClient(client); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	// Fail fast rather than letting every later read return a confusing 401:
+	// USRCERTRULE is client-dependent, so a client with no rule for this
+	// certificate's issuer rejects the logon outright.
+	adtClient, err := s.clientFor(client)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+	if _, err := adtClient.GetSystemInfo(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf(
+			"Active client set to %s, but the connection was refused: %v\n\n"+
+				"If this is a 401, client %s most likely has no CERTRULE entry for your "+
+				"certificate issuer - USRCERTRULE is client-dependent, so a rule in another "+
+				"client does not cover it. See \"Adding another client\" in the plugin SETUP.md.",
+			client, err, client)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"Client-dependent reads now use client %s. Writes still go to %s.",
+		client, s.config.Client)), nil
 }
