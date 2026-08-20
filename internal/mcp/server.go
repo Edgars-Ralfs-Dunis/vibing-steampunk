@@ -56,6 +56,13 @@ type Server struct {
 	asyncTasks   map[string]*AsyncTask
 	asyncTasksMu sync.RWMutex
 	asyncTaskID  int64
+
+	// Dynamic client selection. Only client-dependent READ tools resolve through
+	// the pool; every write path keeps using adtClient, so "code in 050" is
+	// enforced by the absence of a mechanism rather than by a flag.
+	clientPool   map[string]*adt.Client
+	clientPoolMu sync.Mutex
+	activeClient string
 }
 
 // Config holds MCP server configuration.
@@ -151,63 +158,7 @@ type Config struct {
 // NewServer creates a new MCP server for ABAP ADT tools.
 func NewServer(cfg *Config) *Server {
 	// Create ADT client
-	opts := []adt.Option{
-		adt.WithClient(cfg.Client),
-		adt.WithLanguage(cfg.Language),
-	}
-	if cfg.InsecureSkipVerify {
-		opts = append(opts, adt.WithInsecureSkipVerify())
-	}
-	if cfg.ClientCertProvider != nil {
-		opts = append(opts, adt.WithClientCertProvider(cfg.ClientCertProvider))
-	} else if cfg.ClientCert != nil {
-		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
-	}
-	if len(cfg.Cookies) > 0 {
-		opts = append(opts, adt.WithCookies(cfg.Cookies))
-	}
-	if cfg.Verbose {
-		opts = append(opts, adt.WithVerbose())
-	}
-	if cfg.ReauthFunc != nil {
-		opts = append(opts, adt.WithReauthFunc(cfg.ReauthFunc))
-	}
-	if cfg.ReauthTimeout > 0 {
-		opts = append(opts, adt.WithReauthTimeout(cfg.ReauthTimeout))
-	}
-
-	// Configure safety settings
-	safety := adt.UnrestrictedSafetyConfig() // Default: unrestricted for backwards compatibility
-	if cfg.ReadOnly {
-		safety.ReadOnly = true
-	}
-	if cfg.BlockFreeSQL {
-		safety.BlockFreeSQL = true
-	}
-	if cfg.AllowedOps != "" {
-		safety.AllowedOps = cfg.AllowedOps
-	}
-	if cfg.DisallowedOps != "" {
-		safety.DisallowedOps = cfg.DisallowedOps
-	}
-	if len(cfg.AllowedPackages) > 0 {
-		safety.AllowedPackages = cfg.AllowedPackages
-	}
-	if cfg.EnableTransports {
-		safety.EnableTransports = true
-	}
-	if cfg.TransportReadOnly {
-		safety.TransportReadOnly = true
-	}
-	if len(cfg.AllowedTransports) > 0 {
-		safety.AllowedTransports = cfg.AllowedTransports
-	}
-	if cfg.AllowTransportableEdits {
-		safety.AllowTransportableEdits = true
-	}
-	opts = append(opts, adt.WithSafety(safety))
-
-	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
+	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, adtOptionsFor(cfg, cfg.Client)...)
 	return NewServerWithClient(cfg, adtClient)
 }
 
@@ -254,6 +205,8 @@ func NewServerWithClient(cfg *Config, adtClient *adt.Client) *Server {
 		featureProber: featureProber,
 		featureConfig: featureConfig,
 		asyncTasks:    make(map[string]*AsyncTask),
+		clientPool:    make(map[string]*adt.Client),
+		activeClient:  cfg.Client,
 	}
 
 	// Register tools based on mode, disabled groups, and granular tool config

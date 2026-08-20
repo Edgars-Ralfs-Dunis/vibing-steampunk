@@ -205,6 +205,23 @@ func objectNameFromURL(objectURL string) (string, error) {
 }
 
 // Safety returns the safety configuration for checking transport operations.
+// SAPClient returns the SAP client number this Client's session is bound to.
+// The client is fixed when the Client is built: it is carried in the session
+// cookie and CSRF token, not just the sap-client query parameter, so reaching a
+// different client means a different Client.
+func (c *Client) SAPClient() string {
+	if c.config == nil {
+		return ""
+	}
+	return c.config.Client
+}
+
+// SameSessionAs reports whether two Clients share a transport, and therefore a
+// cookie jar, CSRF token and SAP session.
+func (c *Client) SameSessionAs(other *Client) bool {
+	return other != nil && c.transport == other.transport
+}
+
 func (c *Client) Safety() *SafetyConfig {
 	return &c.config.Safety
 }
