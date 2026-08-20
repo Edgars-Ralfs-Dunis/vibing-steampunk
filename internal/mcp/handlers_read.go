@@ -249,7 +249,12 @@ func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToo
 		fetchRows = 1 // minimal fetch for schema
 	}
 
-	contents, err := s.adtClient.GetTableContents(ctx, tableName, fetchRows, sqlQuery)
+	adtClient, err := s.resolveReadClient(request)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	contents, err := adtClient.GetTableContents(ctx, tableName, fetchRows, sqlQuery)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get table contents: %v", err)), nil
 	}
@@ -286,7 +291,12 @@ func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest
 		maxRows = int(mr)
 	}
 
-	contents, err := s.adtClient.RunQuery(ctx, sqlQuery, maxRows)
+	adtClient, err := s.resolveReadClient(request)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	contents, err := adtClient.RunQuery(ctx, sqlQuery, maxRows)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to run query: %v", err)), nil
 	}
@@ -429,4 +439,3 @@ func (s *Server) handleGetAPIReleaseState(ctx context.Context, request mcp.CallT
 	result, _ := json.MarshalIndent(state, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil
 }
-

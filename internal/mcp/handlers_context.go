@@ -61,9 +61,9 @@ func (s *Server) handleParseABAP(ctx context.Context, request mcp.CallToolReques
 	lines := strings.Split(source, "\n")
 
 	type Statement struct {
-		Type   string  `json:"type"` // UNKNOWN, COMMENT, EMPTY, DATA, IF, LOOP, SELECT, METHOD, CLASS, etc.
+		Type   string      `json:"type"` // UNKNOWN, COMMENT, EMPTY, DATA, IF, LOOP, SELECT, METHOD, CLASS, etc.
 		Tokens []abapToken `json:"tokens"`
-		First  string  `json:"first"` // first keyword
+		First  string      `json:"first"` // first keyword
 	}
 
 	var statements []Statement

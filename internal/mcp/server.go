@@ -17,8 +17,8 @@ import (
 // AsyncTask represents a background task status.
 type AsyncTask struct {
 	ID        string      `json:"id"`
-	Type      string      `json:"type"`       // "report", "export", etc.
-	Status    string      `json:"status"`     // "running", "completed", "error"
+	Type      string      `json:"type"`   // "report", "export", etc.
+	Status    string      `json:"status"` // "running", "completed", "error"
 	StartedAt time.Time   `json:"started_at"`
 	EndedAt   *time.Time  `json:"ended_at,omitempty"`
 	Result    interface{} `json:"result,omitempty"`
@@ -27,18 +27,25 @@ type AsyncTask struct {
 
 // Server wraps the MCP server with ADT client.
 type Server struct {
-	mcpServer      *server.MCPServer
-	adtClient      *adt.Client
-	amdpWSClient   *adt.AMDPWebSocketClient   // WebSocket-based AMDP client (ZADT_VSP)
-	debugWSClient  *adt.DebugWebSocketClient  // WebSocket-based debug client (ZADT_VSP)
-	config         *Config                    // Server configuration for session manager creation
-	featureProber  *adt.FeatureProber         // Feature detection system (safety network)
-	featureConfig  adt.FeatureConfig          // Feature configuration
+	mcpServer     *server.MCPServer
+	adtClient     *adt.Client
+	amdpWSClient  *adt.AMDPWebSocketClient  // WebSocket-based AMDP client (ZADT_VSP)
+	debugWSClient *adt.DebugWebSocketClient // WebSocket-based debug client (ZADT_VSP)
+	config        *Config                   // Server configuration for session manager creation
+	featureProber *adt.FeatureProber        // Feature detection system (safety network)
+	featureConfig adt.FeatureConfig         // Feature configuration
 
 	// Async task management
 	asyncTasks   map[string]*AsyncTask
 	asyncTasksMu sync.RWMutex
 	asyncTaskID  int64
+
+	// Dynamic client selection. Only client-dependent READ tools resolve through
+	// the pool; every write path keeps using adtClient, so "code in 050" is
+	// enforced by the absence of a mechanism rather than by a flag.
+	clientPool   map[string]*adt.Client
+	clientPoolMu sync.Mutex
+	activeClient string
 }
 
 // Config holds MCP server configuration.
@@ -74,11 +81,11 @@ type Config struct {
 	DisabledGroups string
 
 	// Safety configuration
-	ReadOnly         bool
-	BlockFreeSQL     bool
-	AllowedOps       string
-	DisallowedOps    string
-	AllowedPackages  []string
+	ReadOnly                bool
+	BlockFreeSQL            bool
+	AllowedOps              string
+	DisallowedOps           string
+	AllowedPackages         []string
 	EnableTransports        bool     // Explicitly enable transport management (default: disabled)
 	TransportReadOnly       bool     // Only allow read operations on transports (list, get)
 	AllowedTransports       []string // Whitelist specific transports (supports wildcards like "A4HK*")
@@ -122,60 +129,7 @@ type Config struct {
 // NewServer creates a new MCP server for ABAP ADT tools.
 func NewServer(cfg *Config) *Server {
 	// Create ADT client
-	opts := []adt.Option{
-		adt.WithClient(cfg.Client),
-		adt.WithLanguage(cfg.Language),
-	}
-	if cfg.InsecureSkipVerify {
-		opts = append(opts, adt.WithInsecureSkipVerify())
-	}
-	if cfg.ClientCertProvider != nil {
-		opts = append(opts, adt.WithClientCertProvider(cfg.ClientCertProvider))
-	} else if cfg.ClientCert != nil {
-		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
-	}
-	if len(cfg.Cookies) > 0 {
-		opts = append(opts, adt.WithCookies(cfg.Cookies))
-	}
-	if cfg.Verbose {
-		opts = append(opts, adt.WithVerbose())
-	}
-	if cfg.ReauthFunc != nil {
-		opts = append(opts, adt.WithReauthFunc(cfg.ReauthFunc))
-	}
-
-	// Configure safety settings
-	safety := adt.UnrestrictedSafetyConfig() // Default: unrestricted for backwards compatibility
-	if cfg.ReadOnly {
-		safety.ReadOnly = true
-	}
-	if cfg.BlockFreeSQL {
-		safety.BlockFreeSQL = true
-	}
-	if cfg.AllowedOps != "" {
-		safety.AllowedOps = cfg.AllowedOps
-	}
-	if cfg.DisallowedOps != "" {
-		safety.DisallowedOps = cfg.DisallowedOps
-	}
-	if len(cfg.AllowedPackages) > 0 {
-		safety.AllowedPackages = cfg.AllowedPackages
-	}
-	if cfg.EnableTransports {
-		safety.EnableTransports = true
-	}
-	if cfg.TransportReadOnly {
-		safety.TransportReadOnly = true
-	}
-	if len(cfg.AllowedTransports) > 0 {
-		safety.AllowedTransports = cfg.AllowedTransports
-	}
-	if cfg.AllowTransportableEdits {
-		safety.AllowTransportableEdits = true
-	}
-	opts = append(opts, adt.WithSafety(safety))
-
-	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
+	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, adtOptionsFor(cfg, cfg.Client)...)
 
 	// Set terminal ID for debugger operations
 	// Priority: 1) Custom ID (SAP GUI), 2) User-based ID
@@ -212,6 +166,8 @@ func NewServer(cfg *Config) *Server {
 		featureProber: featureProber,
 		featureConfig: featureConfig,
 		asyncTasks:    make(map[string]*AsyncTask),
+		clientPool:    make(map[string]*adt.Client),
+		activeClient:  cfg.Client,
 	}
 
 	// Register tools based on mode, disabled groups, and granular tool config

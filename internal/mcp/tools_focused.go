@@ -18,15 +18,15 @@ func focusedToolSet() map[string]bool {
 		"EditSource": true,
 
 		// Data/Metadata read (6)
-		"GetTable":           true,
-		"GetTableContents":   true,
-		"RunQuery":           true,
-		"GetPackage":         true, // Metadata: package contents
-		"GetFunctionGroup":   true, // Metadata: function module list
-		"GetCDSDependencies":    true, // CDS dependency tree
+		"GetTable":             true,
+		"GetTableContents":     true,
+		"RunQuery":             true,
+		"GetPackage":           true, // Metadata: package contents
+		"GetFunctionGroup":     true, // Metadata: function module list
+		"GetCDSDependencies":   true, // CDS dependency tree
 		"GetCDSImpactAnalysis": true, // CDS reverse dependencies (where-used)
 		"GetCDSElementInfo":    true, // CDS element/field metadata
-		"GetMessages":        true, // Message class texts (SE91)
+		"GetMessages":          true, // Message class texts (SE91)
 
 		// Clean Core / API Release State (1)
 		"GetAPIReleaseState": true, // S/4HANA Cloud compatibility check
@@ -39,16 +39,16 @@ func focusedToolSet() map[string]bool {
 		// Development tools (11)
 		"SyntaxCheck":        true,
 		"RunUnitTests":       true,
-		"RunATCCheck":        true,  // Code quality checks
-		"Activate":           true,  // Re-activate objects without editing
-		"ActivatePackage":    true,  // Batch activation of all inactive objects
-		"PrettyPrint":        true,  // Format ABAP code
-		"GetInactiveObjects": true,  // List pending activations
-		"CreatePackage":      true,  // Create local packages ($...)
-		"CreateTable":        true,  // Create DDIC tables from JSON
-		"CompareSource":      true,  // Diff two objects
-		"CloneObject":        true,  // Copy object to new name
-		"GetClassInfo":       true,  // Quick class metadata
+		"RunATCCheck":        true, // Code quality checks
+		"Activate":           true, // Re-activate objects without editing
+		"ActivatePackage":    true, // Batch activation of all inactive objects
+		"PrettyPrint":        true, // Format ABAP code
+		"GetInactiveObjects": true, // List pending activations
+		"CreatePackage":      true, // Create local packages ($...)
+		"CreateTable":        true, // Create DDIC tables from JSON
+		"CompareSource":      true, // Diff two objects
+		"CloneObject":        true, // Copy object to new name
+		"GetClassInfo":       true, // Quick class metadata
 
 		// Advanced/Edge cases (2)
 		"LockObject":   true,
@@ -70,8 +70,8 @@ func focusedToolSet() map[string]bool {
 		"AnalyzeCallGraph":   true, // Call graph statistics
 		"CompareCallGraphs":  true, // Compare static vs actual execution
 		"TraceExecution":     true, // Composite RCA tool
-		"CheckBoundaries":   true, // Package boundary violation analysis
-		"AnalyzeABAPCode":   true, // Native Go code analysis (abaplint v2)
+		"CheckBoundaries":    true, // Package boundary violation analysis
+		"AnalyzeABAPCode":    true, // Native Go code analysis (abaplint v2)
 
 		// Runtime errors / Short dumps (2)
 		"ListDumps": true, // List runtime errors (consistent with List* pattern)
@@ -139,10 +139,10 @@ func focusedToolSet() map[string]bool {
 		"GitExport": true, // Export packages/objects to abapGit ZIP
 
 		// Report Execution (via ZADT_VSP WebSocket)
-		"RunReport":      true, // Execute reports with params/variants, capture ALV
-		"RunReportAsync": true, // Background report execution with polling
-		"GetAsyncResult": true, // Retrieve async task results
-		"GetVariants":    true, // List report variants
+		"RunReport":       true, // Execute reports with params/variants, capture ALV
+		"RunReportAsync":  true, // Background report execution with polling
+		"GetAsyncResult":  true, // Retrieve async task results
+		"GetVariants":     true, // List report variants
 		"GetTextElements": true, // Get program text elements
 		"SetTextElements": true, // Set program text elements
 

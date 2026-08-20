@@ -77,8 +77,8 @@ func (s *Server) handleCheckBoundaries(ctx context.Context, request mcp.CallTool
 		}
 
 		report := g.CheckBoundaries(pkg, &graph.BoundaryOptions{
-			Whitelist:      whitelist,
-			IncludeDynamic: true,
+			Whitelist:       whitelist,
+			IncludeDynamic:  true,
 			IncludeStandard: format == "full",
 		})
 
@@ -126,8 +126,8 @@ func (s *Server) handleCheckBoundaries(ctx context.Context, request mcp.CallTool
 		}
 
 		report := g.CheckBoundaries(objPkg, &graph.BoundaryOptions{
-			Whitelist:      whitelist,
-			IncludeDynamic: true,
+			Whitelist:       whitelist,
+			IncludeDynamic:  true,
 			IncludeStandard: format == "full",
 		})
 
@@ -189,8 +189,8 @@ func (s *Server) handleCheckBoundaries(ctx context.Context, request mcp.CallTool
 		s.resolvePackages(ctx, g)
 
 		report := g.CheckBoundaries(strings.ToUpper(pkg), &graph.BoundaryOptions{
-			Whitelist:      whitelist,
-			IncludeDynamic: true,
+			Whitelist:       whitelist,
+			IncludeDynamic:  true,
 			IncludeStandard: format == "full",
 		})
 
@@ -1029,10 +1029,11 @@ func (s *Server) handleWhereUsedConfig(ctx context.Context, request mcp.CallTool
 
 // handleUsageExamples returns concrete caller snippets for a target object.
 // MCP examples:
-//   SAP(action="analyze", params={"type":"usage_examples","object_type":"FUNC","object_name":"Z_MY_FM"})
-//   SAP(action="analyze", params={"type":"usage_examples","object_type":"CLAS","object_name":"ZCL_API","method":"GET_DATA"})
-//   SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZLEGACY","form":"BUILD_OUTPUT"})
-//   SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZBATCH_RUN","submit":true})
+//
+//	SAP(action="analyze", params={"type":"usage_examples","object_type":"FUNC","object_name":"Z_MY_FM"})
+//	SAP(action="analyze", params={"type":"usage_examples","object_type":"CLAS","object_name":"ZCL_API","method":"GET_DATA"})
+//	SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZLEGACY","form":"BUILD_OUTPUT"})
+//	SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZBATCH_RUN","submit":true})
 func (s *Server) handleUsageExamples(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	target, err := usageTargetFromArgs(args)
