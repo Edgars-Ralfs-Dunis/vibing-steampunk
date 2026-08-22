@@ -97,6 +97,7 @@ func focusedToolSet() map[string]bool {
 		"GetBreakpoints":   true, // List active breakpoints
 		"DeleteBreakpoint": true, // Remove breakpoint
 		"CallRFC":          true, // Call function module via WebSocket (trigger execution)
+		"ResetBridge":      true, // Drop the bridge session so it reloads activated ABAP
 		"MoveObject":       true, // Move object to different package
 
 		// Debugger Session (6)
