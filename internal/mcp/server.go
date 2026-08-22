@@ -63,6 +63,13 @@ type Server struct {
 	clientPool   map[string]*adt.Client
 	clientPoolMu sync.Mutex
 	activeClient string
+
+	// Bridge (ZADT_VSP WebSocket) connections, pooled per SAP client. Execution
+	// tools resolve through this pool; an absent or empty client argument means
+	// the configured client, never the active one.
+	bridgePool      map[string]*adt.AMDPWebSocketClient
+	debugBridgePool map[string]*adt.DebugWebSocketClient
+	bridgePoolMu    sync.Mutex
 }
 
 // Config holds MCP server configuration.
@@ -199,14 +206,16 @@ func NewServerWithClient(cfg *Config, adtClient *adt.Client) *Server {
 	)
 
 	s := &Server{
-		mcpServer:     mcpServer,
-		adtClient:     adtClient,
-		config:        cfg,
-		featureProber: featureProber,
-		featureConfig: featureConfig,
-		asyncTasks:    make(map[string]*AsyncTask),
-		clientPool:    make(map[string]*adt.Client),
-		activeClient:  cfg.Client,
+		mcpServer:       mcpServer,
+		adtClient:       adtClient,
+		config:          cfg,
+		featureProber:   featureProber,
+		featureConfig:   featureConfig,
+		asyncTasks:      make(map[string]*AsyncTask),
+		clientPool:      make(map[string]*adt.Client),
+		activeClient:    cfg.Client,
+		bridgePool:      make(map[string]*adt.AMDPWebSocketClient),
+		debugBridgePool: make(map[string]*adt.DebugWebSocketClient),
 	}
 
 	// Register tools based on mode, disabled groups, and granular tool config
@@ -384,22 +393,7 @@ func (s *Server) applyWSAuth(setCookies func(map[string]string)) {
 // ensureWSConnected ensures the WebSocket client is connected, creating it if needed.
 // Returns error result if connection fails, nil on success.
 func (s *Server) ensureWSConnected(ctx context.Context, toolName string) *mcp.CallToolResult {
-	if s.amdpWSClient == nil || !s.amdpWSClient.IsConnected() {
-		s.amdpWSClient = adt.NewAMDPWebSocketClient(
-			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
-		)
-		s.applyWSAuth(s.amdpWSClient.SetCookies)
-		if s.config.ClientCertProvider != nil {
-			s.amdpWSClient.SetClientCertProvider(s.config.ClientCertProvider)
-		} else if s.config.ClientCert != nil {
-			s.amdpWSClient.SetClientCert(s.config.ClientCert)
-		}
-		if err := s.amdpWSClient.Connect(ctx); err != nil {
-			s.amdpWSClient = nil
-			return newToolResultError(fmt.Sprintf("%s: WebSocket connect failed: %v", toolName, err))
-		}
-	}
-	return nil
+	return s.ensureWSConnectedFor(ctx, toolName, "")
 }
 
 // requireActiveAMDPSession checks if there's an active AMDP debug session.

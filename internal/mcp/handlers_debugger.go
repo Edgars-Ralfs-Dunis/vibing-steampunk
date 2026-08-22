@@ -190,17 +190,20 @@ func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest)
 		}
 	}
 
-	// Ensure WebSocket client is connected
-	if err := s.ensureDebugWSClient(ctx); err != nil {
+	// Ensure the bridge is connected, in another SAP client when asked for.
+	// Customizing is client-dependent, so a call that maintains it has to run in
+	// the client that owns the data.
+	bridge, err := s.ensureDebugWSClientFor(ctx, bridgeClientArg(request))
+	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
 	}
 
-	result, err := s.debugWSClient.CallRFC(ctx, function, params)
+	result, err := bridge.CallRFC(ctx, function, params)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("CallRFC failed: %v", err)), nil
 	}
 
 	// Format result
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(fmt.Sprintf("RFC call completed.\n\nFunction: %s\nSubrc: %d\n\nResult:\n%s", function, result.Subrc, string(resultJSON))), nil
+	return mcp.NewToolResultText(fmt.Sprintf("%s\nRFC call completed.\n\nFunction: %s\nSubrc: %d\n\nResult:\n%s", s.bridgeAttributionFor(bridgeClientArg(request)), function, result.Subrc, string(resultJSON))), nil
 }

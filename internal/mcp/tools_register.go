@@ -710,6 +710,9 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 			mcp.WithString("params",
 				mcp.Description("JSON object with function parameters (e.g., '{\"IV_PARAM\":\"value\"}')"),
 			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
+			),
 		), s.handleCallRFC)
 	}
 
@@ -2101,6 +2104,9 @@ func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 			mcp.WithString("params",
 				mcp.Description("JSON object with selection screen parameters (e.g., '{\"P_BUKRS\":\"1000\",\"S_KUNNR\":{\"SIGN\":\"I\",\"OPTION\":\"EQ\",\"LOW\":\"0000001000\"}}'). Keys are parameter names."),
 			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
+			),
 		), s.handleRunReport)
 	}
 
@@ -2116,6 +2122,9 @@ func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("params",
 				mcp.Description("JSON object with selection screen parameters"),
+			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
 			),
 		), s.handleRunReportAsync)
 	}
@@ -2139,6 +2148,9 @@ func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 			mcp.WithString("report",
 				mcp.Description("Report program name"),
 				mcp.Required(),
+			),
+			mcp.WithString("client",
+				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
 			),
 		), s.handleGetVariants)
 	}
