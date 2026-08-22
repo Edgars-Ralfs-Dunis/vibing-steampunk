@@ -227,6 +227,13 @@ func (c *BaseWebSocketClient) IsConnected() bool {
 	return c.connected
 }
 
+// SAPClient returns the SAP client this bridge connection is bound to. The
+// client is fixed at construction and stamped into the WebSocket URL, so a
+// different client means a different connection, never a redirected one.
+func (c *BaseWebSocketClient) SAPClient() string {
+	return c.client
+}
+
 // GetUser returns the username.
 func (c *BaseWebSocketClient) GetUser() string {
 	return c.user
