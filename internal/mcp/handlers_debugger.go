@@ -265,6 +265,24 @@ func (s *Server) handleDeleteBreakpoint(ctx context.Context, request mcp.CallToo
 	return mcp.NewToolResultText(fmt.Sprintf("Breakpoint %s deleted successfully.", bpID)), nil
 }
 
+func (s *Server) handleResetBridge(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	all, _ := request.GetArguments()["all"].(bool)
+
+	reset, err := s.resetBridges(bridgeClientArg(request), all)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+	if len(reset) == 0 {
+		return mcp.NewToolResultText("No pooled bridges to reset."), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"Bridge session reset for client(s): %s.\n\nThe next CallRFC/RunReport/Debugger call reconnects, "+
+			"giving a fresh ABAP internal session that loads the current active version of every class and "+
+			"function module interface. Any attached debuggee, breakpoints and listener on those bridges are gone.",
+		strings.Join(reset, ", "))), nil
+}
+
 func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	function, ok := request.GetArguments()["function"].(string)
 	if !ok || function == "" {

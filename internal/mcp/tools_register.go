@@ -652,6 +652,18 @@ func (s *Server) registerDebuggerTools(shouldRegister func(string) bool) {
 		), s.handleDeleteBreakpoint)
 	}
 
+	if shouldRegister("ResetBridge") {
+		s.mcpServer.AddTool(mcp.NewTool("ResetBridge",
+			mcp.WithDescription("Drop the pooled ZADT_VSP bridge session(s) so the next bridge call reconnects. A bridge is one long-lived ABAP internal session, which keeps every class it has loaded and caches function module interfaces, so after activating changed ABAP it silently keeps executing the superseded version. Call this after activating a class or changing an FM signature, before testing it through CallRFC/RunReport. Not needed for repository reads or writes, which use stateless HTTP. Discards any attached debuggee, breakpoints and listener on the affected bridges."),
+			mcp.WithString("client",
+				mcp.Description("SAP client whose bridge to reset, e.g. \"460\". Optional: defaults to the configured client."),
+			),
+			mcp.WithBoolean("all",
+				mcp.Description("Reset every pooled bridge for all clients. Ignores 'client'."),
+			),
+		), s.handleResetBridge)
+	}
+
 	if shouldRegister("CallRFC") {
 		s.mcpServer.AddTool(mcp.NewTool("CallRFC",
 			mcp.WithDescription("Call a function module via WebSocket (ZADT_VSP). Useful for triggering ABAP code execution to hit breakpoints. Parameters are passed as key-value pairs."),

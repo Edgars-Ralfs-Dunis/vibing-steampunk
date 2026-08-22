@@ -815,7 +815,7 @@ func GetAllToolNames() []string {
 		"AMDPDebuggerStart", "AMDPDebuggerResume", "AMDPDebuggerStop",
 		"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
 		// RFC (requires ZADT_VSP)
-		"CallRFC", "ExecuteABAP",
+		"CallRFC", "ExecuteABAP", "ResetBridge",
 		// Git/abapGit (requires ZADT_VSP)
 		"GitTypes", "GitExport",
 		// Install tools
