@@ -39,8 +39,13 @@ func (s *Server) routeReportAction(ctx context.Context, action, objectType, obje
 
 func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Ensure WebSocket is connected
-	if errResult := s.ensureWSConnected(ctx, "RunReport"); errResult != nil {
+	client := bridgeClientArg(request)
+	if errResult := s.ensureWSConnectedFor(ctx, "RunReport", client); errResult != nil {
 		return errResult, nil
+	}
+	bridge, err := s.bridgeFor(client)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("RunReport: %v", err)), nil
 	}
 
 	// Parse parameters
@@ -66,7 +71,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	}
 
 	// Step 1: Schedule background job via WebSocket
-	result, err := s.amdpWSClient.RunReport(ctx, params)
+	result, err := bridge.RunReport(ctx, params)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("RunReport failed: %v", err)), nil
 	}
@@ -82,7 +87,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	defer cancel()
 
 	for {
-		jobStatus, err = s.amdpWSClient.GetJobStatus(pollCtx, result.JobName, result.JobCount)
+		jobStatus, err = bridge.GetJobStatus(pollCtx, result.JobName, result.JobCount)
 		if err != nil {
 			return newToolResultError(fmt.Sprintf("GetJobStatus failed: %v", err)), nil
 		}
@@ -101,6 +106,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 
 	// Step 3: Format output
 	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s\n", s.bridgeAttributionFor(client))
 	fmt.Fprintf(&sb, "Report: %s\n", result.Report)
 	fmt.Fprintf(&sb, "Job: %s/%s\n", result.JobName, result.JobCount)
 	fmt.Fprintf(&sb, "Status: %s\n\n", jobStatus.Status)
@@ -109,7 +115,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	if len(jobStatus.SpoolIDs) > 0 {
 		sb.WriteString("Spool Output:\n")
 		for _, spoolID := range jobStatus.SpoolIDs {
-			spoolResult, err := s.amdpWSClient.GetSpoolOutput(ctx, spoolID)
+			spoolResult, err := bridge.GetSpoolOutput(ctx, spoolID)
 			if err != nil {
 				fmt.Fprintf(&sb, "  [Spool %s: error reading - %v]\n", spoolID, err)
 				continue
@@ -127,8 +133,13 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 
 func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Ensure WebSocket is connected
-	if errResult := s.ensureWSConnected(ctx, "RunReportAsync"); errResult != nil {
+	client := bridgeClientArg(request)
+	if errResult := s.ensureWSConnectedFor(ctx, "RunReportAsync", client); errResult != nil {
 		return errResult, nil
+	}
+	bridge, err := s.bridgeFor(client)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("RunReportAsync: %v", err)), nil
 	}
 
 	// Parse parameters
@@ -171,7 +182,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		bgCtx := context.Background()
 
 		// Step 1: Schedule background job
-		result, err := s.amdpWSClient.RunReport(bgCtx, params)
+		result, err := bridge.RunReport(bgCtx, params)
 		if err != nil {
 			s.asyncTasksMu.Lock()
 			now := time.Now()
@@ -198,7 +209,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 
 		var jobStatus *adt.JobStatusResult
 		for {
-			jobStatus, err = s.amdpWSClient.GetJobStatus(pollCtx, result.JobName, result.JobCount)
+			jobStatus, err = bridge.GetJobStatus(pollCtx, result.JobName, result.JobCount)
 			if err != nil {
 				s.asyncTasksMu.Lock()
 				now := time.Now()
@@ -231,7 +242,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		var spoolOutput strings.Builder
 		if len(jobStatus.SpoolIDs) > 0 {
 			for _, spoolID := range jobStatus.SpoolIDs {
-				spoolResult, err := s.amdpWSClient.GetSpoolOutput(bgCtx, spoolID)
+				spoolResult, err := bridge.GetSpoolOutput(bgCtx, spoolID)
 				if err != nil {
 					fmt.Fprintf(&spoolOutput, "[Spool %s: error - %v]\n", spoolID, err)
 					continue
@@ -324,8 +335,13 @@ func (s *Server) handleGetAsyncResult(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleGetVariants(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errResult := s.ensureWSConnected(ctx, "GetVariants"); errResult != nil {
+	client := bridgeClientArg(request)
+	if errResult := s.ensureWSConnectedFor(ctx, "GetVariants", client); errResult != nil {
 		return errResult, nil
+	}
+	bridge, err := s.bridgeFor(client)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetVariants: %v", err)), nil
 	}
 
 	report, _ := request.GetArguments()["report"].(string)
@@ -333,12 +349,13 @@ func (s *Server) handleGetVariants(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError("report parameter is required"), nil
 	}
 
-	result, err := s.amdpWSClient.GetVariants(ctx, report)
+	result, err := bridge.GetVariants(ctx, report)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GetVariants failed: %v", err)), nil
 	}
 
 	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s\n", s.bridgeAttributionFor(client))
 	fmt.Fprintf(&sb, "Variants for %s:\n\n", result.Report)
 
 	if len(result.Variants) == 0 {
