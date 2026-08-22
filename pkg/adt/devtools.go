@@ -162,10 +162,7 @@ func (c *Client) Activate(ctx context.Context, objectURL string, objectName stri
 		return nil, err
 	}
 
-	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
-  <adtcore:objectReference adtcore:uri="%s" adtcore:name="%s"/>
-</adtcore:objectReferences>`, objectURL, objectName)
+	body := buildObjectReferences([]InactiveObject{{URI: objectURL, Name: objectName}})
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/activation?method=activate&preauditRequested=true", &RequestOptions{
 		Method:      http.MethodPost,
@@ -176,7 +173,69 @@ func (c *Client) Activate(ctx context.Context, objectURL string, objectName stri
 		return nil, fmt.Errorf("activation failed: %w", err)
 	}
 
-	return parseActivationResult(resp.Body)
+	result, err := parseActivationResult(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// A phase-1 <ioc:inactiveObjects> body is SAP asking which parts to
+	// activate -- a question, not a failure report. Answer it by POSTing the
+	// listed refs back with preauditRequested=false.
+	//
+	// Objects that own child includes (CLAS, FUGR) always take this path: the
+	// preaudit lists their includes/methods. A flat PROG gets an empty phase-1
+	// response and is already active by here. Without the confirm, every
+	// composite object silently stayed inactive while vsp reported a failure
+	// it could not explain (empty Messages).
+	if len(result.Inactive) > 0 && !hasBlockingMessages(result) {
+		refs := make([]InactiveObject, 0, len(result.Inactive))
+		for _, o := range result.Inactive {
+			// The transport group header comes through as an entry with no
+			// object ref; sending it back makes SAP reject the whole batch.
+			if o.URI == "" {
+				continue
+			}
+			refs = append(refs, o)
+		}
+		if len(refs) > 0 {
+			resp2, err := c.transport.Request(ctx, "/sap/bc/adt/activation?method=activate&preauditRequested=false", &RequestOptions{
+				Method:      http.MethodPost,
+				Body:        []byte(buildObjectReferences(refs)),
+				ContentType: "application/xml",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("activation confirm failed: %w", err)
+			}
+			return parseActivationResult(resp2.Body)
+		}
+	}
+
+	return result, nil
+}
+
+// buildObjectReferences renders an <adtcore:objectReferences> document, the
+// payload both activation phases take.
+func buildObjectReferences(objs []InactiveObject) string {
+	var b strings.Builder
+	b.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	b.WriteString("<adtcore:objectReferences xmlns:adtcore=\"http://www.sap.com/adt/core\">\n")
+	for _, o := range objs {
+		b.WriteString(fmt.Sprintf("  <adtcore:objectReference adtcore:uri=\"%s\" adtcore:name=\"%s\"/>\n",
+			escapeXMLAttr(o.URI), escapeXMLAttr(o.Name)))
+	}
+	b.WriteString("</adtcore:objectReferences>")
+	return b.String()
+}
+
+// hasBlockingMessages reports whether activation returned a real error, as
+// opposed to a preaudit list awaiting confirmation.
+func hasBlockingMessages(r *ActivationResult) bool {
+	for _, m := range r.Messages {
+		if strings.ContainsAny(m.Type, "EAX") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseActivationResult(data []byte) (*ActivationResult, error) {
@@ -488,6 +547,20 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 
 	result.Summary = fmt.Sprintf("Activated %d objects, %d failed", len(result.Activated), len(result.Failed))
 	return result, nil
+}
+
+// activationFailureReason summarises why an activation did not take, so the
+// caller reports something better than a bare count.
+func activationFailureReason(res *ActivationResult) string {
+	for _, m := range res.Messages {
+		if strings.ContainsAny(m.Type, "EAX") && m.ShortText != "" {
+			return m.ShortText
+		}
+	}
+	if len(res.Inactive) > 0 {
+		return fmt.Sprintf("still inactive after activation (%d object(s) unconfirmed)", len(res.Inactive))
+	}
+	return "activation reported failure with no message"
 }
 
 // objectBelongsToPackage checks if an inactive object belongs to the given package.
