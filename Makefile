@@ -51,7 +51,7 @@ EXE=$(if $(filter windows,$(CURRENT_OS)),.exe,)
 LOCAL_BINARY=$(BINARY_NAME)-$(CURRENT_OS)-$(CURRENT_ARCH)$(EXE)
 
 .PHONY: all build clean test lint fmt deps tidy help install install-user link local-alias run
-.PHONY: build-all build-all-all build-linux build-darwin build-windows build-win sso-helper
+.PHONY: build-all build-all-all build-linux build-darwin build-windows build-win sso-helper sign codesign-identity
 .PHONY: deploy-windows sync-embedded release refresh-deps fetch-deps check-deps
 
 all: deps lint test build
@@ -63,6 +63,7 @@ build: ## Build for the current platform, as build/vsp-<os>-<arch> with build/vs
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(LOCAL_BINARY) $(CMD_DIR)
 	@$(MAKE) --no-print-directory local-alias
 	@echo "Built: $(BUILD_DIR)/$(LOCAL_BINARY) (also $(BUILD_DIR)/$(BINARY_NAME))"
+	@$(MAKE) --no-print-directory sign
 
 local-alias: ## Point build/vsp at this platform's binary
 	@if [ "$(CURRENT_OS)" = "windows" ]; then \
@@ -90,6 +91,7 @@ build-all: sso-helper ## Build for common platforms (linux-amd64, darwin-arm64, 
 	@$(MAKE) --no-print-directory local-alias 2>/dev/null || \
 		$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 	@echo "Build complete. Binaries in $(BUILD_DIR)/"
+	@$(MAKE) --no-print-directory sign
 	@ls -lh $(BUILD_DIR)/
 
 build-all-all: sso-helper ## Build for ALL platforms (linux, darwin, windows - amd64, arm64, 386, arm)
@@ -122,6 +124,40 @@ build-darwin: ## Build for macOS (amd64, arm64)
 		echo "Building $$output..."; \
 		GOOS=darwin GOARCH=$$arch $(GOBUILD) $(LDFLAGS) -o $$output $(CMD_DIR) || exit 1; \
 	done
+	@$(MAKE) --no-print-directory sign
+
+## Codesign (macOS)
+
+# ponytail: an ad-hoc signature gets a cdhash-pinned keychain grant, so every
+# rebuild re-prompts for the SLC client-cert key. A stable signing identity pins
+# the ACL to the certificate instead. Identity backup: ~/.zed-adt/vsp-local-signing.p12
+# ponytail: self-signed = no Apple Team ID. If the partition list still records
+# cdhash after this, the upgrade path is a Developer ID cert (see CHANGELOG).
+CODESIGN_ID ?= vsp-local
+CODESIGN_IDENTIFIER ?= com.zalaris.vsp
+
+sign: ## Sign macOS binaries with $(CODESIGN_ID) (keeps the keychain grant across rebuilds)
+	@command -v codesign >/dev/null 2>&1 || exit 0
+	@for b in $(BUILD_DIR)/$(LOCAL_BINARY) $(BUILD_DIR)/$(LOCAL_BINARY)-darwin-arm64 $(BUILD_DIR)/$(LOCAL_BINARY)-darwin-amd64; do \
+		[ -f "$$b" ] && file "$$b" | grep -q Mach-O || continue; \
+		if codesign -f -s $(CODESIGN_ID) --identifier $(CODESIGN_IDENTIFIER) "$$b" >/dev/null 2>&1; then \
+			echo "signed: $$b"; \
+		else \
+			echo "sign: no '$(CODESIGN_ID)' identity — run 'make codesign-identity'"; exit 0; \
+		fi; \
+	done
+
+codesign-identity: ## Create the local self-signed code-signing identity (once per Mac)
+	@security find-certificate -c $(CODESIGN_ID) >/dev/null 2>&1 && { echo "'$(CODESIGN_ID)' already in the keychain"; exit 0; } || true
+	@tmp=$$(mktemp -d); \
+	printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=$(CODESIGN_ID)\nO=Zalaris\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' > $$tmp/cnf; \
+	openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 -config $$tmp/cnf -keyout $$tmp/k.pem -out $$tmp/c.pem 2>/dev/null; \
+	openssl pkcs12 -export -inkey $$tmp/k.pem -in $$tmp/c.pem -name $(CODESIGN_ID) -passout pass:vsp \
+		-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -out $$tmp/id.p12 2>/dev/null; \
+	security import $$tmp/id.p12 -k $$HOME/Library/Keychains/login.keychain-db -P vsp -A; \
+	mkdir -p $$HOME/.zed-adt && install -m 600 $$tmp/id.p12 $$HOME/.zed-adt/vsp-local-signing.p12; \
+	rm -rf $$tmp; \
+	echo "identity '$(CODESIGN_ID)' created; backup at ~/.zed-adt/vsp-local-signing.p12 (passphrase: vsp)"
 
 build-windows: ## Build for Windows (amd64, arm64, 386)
 	@mkdir -p $(BUILD_DIR)
