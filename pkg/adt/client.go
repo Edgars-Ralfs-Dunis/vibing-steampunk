@@ -171,6 +171,13 @@ func normalizeObjectURLForPackageCheck(objectURL string) string {
 	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
 		return normalized[:idx]
 	}
+	// A function module has no TADIR entry of its own -- it belongs to its
+	// function group's package -- so searching for the FM name returns a hit
+	// with an empty PackageName and the allowlist check fails with
+	// "package metadata not found". Resolve the group instead.
+	if idx := strings.Index(normalized, "/fmodules/"); idx >= 0 {
+		return normalized[:idx]
+	}
 	if strings.HasSuffix(normalized, "/source/main") {
 		return strings.TrimSuffix(normalized, "/source/main")
 	}
