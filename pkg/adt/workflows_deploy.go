@@ -96,6 +96,31 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}, nil
 	}
 
+	// Only hard errors block the write. Warnings and info (e.g. "the regex
+	// standard POSIX is deprecated") are reported but must not fail the deploy —
+	// same severity filter WriteClass uses.
+	var hardErrors []SyntaxCheckResult
+	for _, e := range syntaxErrors {
+		if e.Severity == "E" || e.Severity == "A" || e.Severity == "X" {
+			hardErrors = append(hardErrors, e)
+		}
+	}
+	if len(hardErrors) > 0 {
+		errorMsgs := make([]string, len(hardErrors))
+		for i, e := range hardErrors {
+			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+		}
+		return &DeployResult{
+			FilePath:     filePath,
+			ObjectURL:    objectURL,
+			ObjectName:   info.ObjectName,
+			ObjectType:   string(info.ObjectType),
+			Success:      false,
+			SyntaxErrors: errorMsgs,
+			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(hardErrors)),
+		}, nil
+	}
+
 	// 6. Lock object
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
@@ -117,23 +142,6 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
 		}
 	}()
-
-	if len(syntaxErrors) > 0 {
-		// Convert syntax errors to strings
-		errorMsgs := make([]string, len(syntaxErrors))
-		for i, e := range syntaxErrors {
-			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
-		}
-		return &DeployResult{
-			FilePath:     filePath,
-			ObjectURL:    objectURL,
-			ObjectName:   info.ObjectName,
-			ObjectType:   string(info.ObjectType),
-			Success:      false,
-			SyntaxErrors: errorMsgs,
-			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(syntaxErrors)),
-		}, nil
-	}
 
 	// 7. Write source (need source URL, not object URL)
 	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName, info.ParentName)
@@ -263,9 +271,17 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 				Message:    fmt.Sprintf("Syntax check failed: %v", err),
 			}, nil
 		}
-		if len(syntaxErrors) > 0 {
-			errorMsgs := make([]string, len(syntaxErrors))
-			for i, e := range syntaxErrors {
+
+		// Only hard errors block the write — see CreateFromFile.
+		var hardErrors []SyntaxCheckResult
+		for _, e := range syntaxErrors {
+			if e.Severity == "E" || e.Severity == "A" || e.Severity == "X" {
+				hardErrors = append(hardErrors, e)
+			}
+		}
+		if len(hardErrors) > 0 {
+			errorMsgs := make([]string, len(hardErrors))
+			for i, e := range hardErrors {
 				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
 			}
 			return &DeployResult{
@@ -275,7 +291,7 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 				ObjectType:   string(info.ObjectType),
 				Success:      false,
 				SyntaxErrors: errorMsgs,
-				Message:      fmt.Sprintf("Source has %d syntax errors", len(syntaxErrors)),
+				Message:      fmt.Sprintf("Source has %d syntax errors", len(hardErrors)),
 			}, nil
 		}
 	}
