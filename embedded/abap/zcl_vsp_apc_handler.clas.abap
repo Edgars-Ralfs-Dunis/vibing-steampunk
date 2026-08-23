@@ -55,7 +55,19 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     APPEND NEW zcl_vsp_rfc_service( ) TO gt_services.
     APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
     APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_git_service( ) TO gt_services.
+*   The git domain needs abapGit (ZCL_VSP_GIT_SERVICE references
+*   ZCX_ABAPGIT_EXCEPTION). Referenced STATICALLY this class cannot compile on a
+*   system without abapGit - which is exactly the system the installer's
+*   skip_git_service option is for, so that option produced an install where the
+*   APC handler itself could not be created. Bound dynamically instead: with
+*   abapGit the git domain is registered as before, without it the bridge still
+*   comes up and simply has no git domain.
+    TRY.
+        DATA lo_git TYPE REF TO zif_vsp_service.
+        CREATE OBJECT lo_git TYPE ('ZCL_VSP_GIT_SERVICE').
+        APPEND lo_git TO gt_services.
+      CATCH cx_sy_create_object_error.
+    ENDTRY.
     APPEND NEW zcl_vsp_report_service( ) TO gt_services.
   ENDMETHOD.
 

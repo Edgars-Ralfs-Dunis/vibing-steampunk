@@ -3157,15 +3157,28 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 
 		fmt.Fprintf(os.Stderr, "  [%d/%d] %s ... ", i+1, len(objects), obj.Name)
 
+		// Description is REQUIRED for the create path; without it
+		// writeSourceCreate returns (result{Success:false}, nil) and the object
+		// is silently skipped.
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
+		writeResult, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		switch {
+		case err != nil:
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failed++
-		} else {
+		// WriteSource reports logical failures in the RESULT, not the error.
+		case writeResult == nil || !writeResult.Success:
+			msg := "write reported no success and gave no reason"
+			if writeResult != nil && writeResult.Message != "" {
+				msg = writeResult.Message
+			}
+			fmt.Fprintf(os.Stderr, "FAILED: %s\n", msg)
+			failed++
+		default:
 			fmt.Fprintf(os.Stderr, "OK\n")
 			deployed++
 		}

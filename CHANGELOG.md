@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.39.0] - 2026-08-23
+### Bug Fixes
+
+- **InstallZADTVSP reported "✓ Deployed" for objects it never wrote.** `WriteSource` reports
+  logical failures in the RESULT (`Success`/`Message`), not in the error — `writeSourceCreate`
+  returns `(result{Success:false}, nil)` when `Description` is empty. Both installers passed
+  `WriteSourceOptions` without a `Description` AND discarded the result, so every
+  not-yet-existing object silently failed while the summary said `Failed: 0`. Fixed in the MCP
+  handler and the CLI (they carried duplicate copies of the same loop). Measured on ITH
+  (S/4HANA 816): 8 objects reported deployed, zero rows in TADIR/SEOCLASSDF.
+- **DeployFromFile/ImportFromFile could not write any object (`423 InvalidLockHandle`).**
+  `SyntaxCheck` issues a stateless request, and the deploy path ran it BETWEEN `LockObject` and
+  `UpdateSource`, dropping the `sap-contextid` and invalidating the lock handle. Syntax check now
+  runs before the lock in `CreateFromFile`/`UpdateFromFile`, matching `WriteClass`. Reproduced on
+  both ECC 6.08 and S/4HANA 816, so it was never release-specific.
+- **Deprecation warnings were treated as fatal by the deploy path.** `CreateFromFile`/
+  `UpdateFromFile` failed on `len(syntaxErrors) > 0`; they now filter on severity `E`/`A`/`X`
+  like `WriteClass` does. A "the regex standard POSIX is deprecated" warning was enough to
+  block a deploy.
+- **ZCL_ADT_00_AMDP_TEST was missing from the installer's object list.** `ZCL_VSP_AMDP_SERVICE`
+  references `zcl_adt_00_amdp_test=>tt_result` and `=>calculate_squares` statically and could
+  not compile without it. Now embedded and deployed ahead of the AMDP service.
+- **`skip_git_service` produced an install that could not work.** `ZCL_VSP_APC_HANDLER` bound
+  `ZCL_VSP_GIT_SERVICE` statically, but that class needs abapGit (`ZCX_ABAPGIT_EXCEPTION`) — so
+  on any system without abapGit the APC handler itself failed to compile, i.e. exactly the case
+  the option exists for. The git domain is now bound dynamically and simply absent when abapGit
+  is not installed.
+
+### Tests
+
+- `embedded/abap`: every object must carry Source and Description; ZCL_ADT_00_AMDP_TEST must
+  precede ZCL_VSP_AMDP_SERVICE.
+
 ## [2.38.1] - 2026-04-07
 ### Bug Fixes
 

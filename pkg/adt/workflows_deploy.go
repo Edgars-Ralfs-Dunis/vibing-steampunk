@@ -77,7 +77,48 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		return nil, err
 	}
 
-	// 5. Lock object
+	// 5. Syntax check — BEFORE the lock. SyntaxCheck is a stateless request,
+	// so running it between LOCK and PUT drops the sap-contextid and
+	// invalidates the lock handle (423 InvalidLockHandle).
+	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
+			Message:    fmt.Sprintf("Object created but syntax check failed: %v", err),
+		}, nil
+	}
+
+	// Only hard errors block the write. Warnings and info (e.g. "the regex
+	// standard POSIX is deprecated") are reported but must not fail the deploy —
+	// same severity filter WriteClass uses.
+	var hardErrors []SyntaxCheckResult
+	for _, e := range syntaxErrors {
+		if e.Severity == "E" || e.Severity == "A" || e.Severity == "X" {
+			hardErrors = append(hardErrors, e)
+		}
+	}
+	if len(hardErrors) > 0 {
+		errorMsgs := make([]string, len(hardErrors))
+		for i, e := range hardErrors {
+			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+		}
+		return &DeployResult{
+			FilePath:     filePath,
+			ObjectURL:    objectURL,
+			ObjectName:   info.ObjectName,
+			ObjectType:   string(info.ObjectType),
+			Success:      false,
+			SyntaxErrors: errorMsgs,
+			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(hardErrors)),
+		}, nil
+	}
+
+	// 6. Lock object
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		return &DeployResult{
@@ -98,37 +139,6 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
 		}
 	}()
-
-	// 6. Syntax check (optional pre-check)
-	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
-			Message:    fmt.Sprintf("Object created but syntax check failed: %v", err),
-		}, nil
-	}
-
-	if len(syntaxErrors) > 0 {
-		// Convert syntax errors to strings
-		errorMsgs := make([]string, len(syntaxErrors))
-		for i, e := range syntaxErrors {
-			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
-		}
-		return &DeployResult{
-			FilePath:     filePath,
-			ObjectURL:    objectURL,
-			ObjectName:   info.ObjectName,
-			ObjectType:   string(info.ObjectType),
-			Success:      false,
-			SyntaxErrors: errorMsgs,
-			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(syntaxErrors)),
-		}, nil
-	}
 
 	// 7. Write source (need source URL, not object URL)
 	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
@@ -224,7 +234,48 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		return nil, err
 	}
 
-	// 4. Lock object
+	// 4. Syntax check — BEFORE the lock, same reason as CreateFromFile: a
+	// stateless SyntaxCheck between LOCK and PUT invalidates the lock handle.
+	// (skip for class includes - will check after update)
+	if !isClassInclude {
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			return &DeployResult{
+				FilePath:   filePath,
+				ObjectURL:  objectURL,
+				ObjectName: info.ObjectName,
+				ObjectType: string(info.ObjectType),
+				Success:    false,
+				Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
+				Message:    fmt.Sprintf("Syntax check failed: %v", err),
+			}, nil
+		}
+
+		// Only hard errors block the write — see CreateFromFile.
+		var hardErrors []SyntaxCheckResult
+		for _, e := range syntaxErrors {
+			if e.Severity == "E" || e.Severity == "A" || e.Severity == "X" {
+				hardErrors = append(hardErrors, e)
+			}
+		}
+		if len(hardErrors) > 0 {
+			errorMsgs := make([]string, len(hardErrors))
+			for i, e := range hardErrors {
+				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+			}
+			return &DeployResult{
+				FilePath:     filePath,
+				ObjectURL:    objectURL,
+				ObjectName:   info.ObjectName,
+				ObjectType:   string(info.ObjectType),
+				Success:      false,
+				SyntaxErrors: errorMsgs,
+				Message:      fmt.Sprintf("Source has %d syntax errors", len(hardErrors)),
+			}, nil
+		}
+	}
+
+	// 5. Lock object
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		return &DeployResult{
@@ -245,39 +296,6 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
 		}
 	}()
-
-	// 5. Syntax check (skip for class includes - will check after update)
-	if !isClassInclude {
-		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
-		if err != nil {
-			return &DeployResult{
-				FilePath:   filePath,
-				ObjectURL:  objectURL,
-				ObjectName: info.ObjectName,
-				ObjectType: string(info.ObjectType),
-				Success:    false,
-				Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
-				Message:    fmt.Sprintf("Syntax check failed: %v", err),
-			}, nil
-		}
-
-		if len(syntaxErrors) > 0 {
-			// Convert syntax errors to strings
-			errorMsgs := make([]string, len(syntaxErrors))
-			for i, e := range syntaxErrors {
-				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
-			}
-			return &DeployResult{
-				FilePath:     filePath,
-				ObjectURL:    objectURL,
-				ObjectName:   info.ObjectName,
-				ObjectType:   string(info.ObjectType),
-				Success:      false,
-				SyntaxErrors: errorMsgs,
-				Message:      fmt.Sprintf("Source has %d syntax errors", len(syntaxErrors)),
-			}, nil
-		}
-	}
 
 	// 6. Write source
 	if isClassInclude {

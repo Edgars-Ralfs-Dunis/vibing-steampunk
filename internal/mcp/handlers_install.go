@@ -425,16 +425,32 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 		fmt.Fprintf(&sb, "  [%d/%d] %s ", i+1, len(objects), obj.Name)
 
-		// Use WriteSource to create/update
+		// Use WriteSource to create/update.
+		// Description is REQUIRED for the create path — without it
+		// writeSourceCreate bails out with a message and a nil error, so every
+		// not-yet-existing object silently failed while reporting success.
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
+		writeResult, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		switch {
+		case err != nil:
 			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
 			failed = append(failed, obj.Name+": "+err.Error())
-		} else {
+		// WriteSource reports logical failures in the RESULT, not the error —
+		// unsupported type, missing description, create/activate failure all
+		// come back as (result{Success:false}, nil). Checking err alone is what
+		// turned every failure into "✓ Deployed".
+		case writeResult == nil || !writeResult.Success:
+			msg := "write reported no success and gave no reason"
+			if writeResult != nil && writeResult.Message != "" {
+				msg = writeResult.Message
+			}
+			fmt.Fprintf(&sb, "✗ Failed: %s\n", msg)
+			failed = append(failed, obj.Name+": "+msg)
+		default:
 			sb.WriteString("✓ Deployed\n")
 			deployed = append(deployed, obj.Name)
 		}
