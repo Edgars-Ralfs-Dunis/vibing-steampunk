@@ -24,6 +24,11 @@ var ZclVspDebugService string
 //go:embed zcl_vsp_amdp_service.clas.abap
 var ZclVspAmdpService string
 
+// Referenced STATICALLY by ZCL_VSP_AMDP_SERVICE (zcl_adt_00_amdp_test=>tt_result
+// and =>calculate_squares), so the AMDP service cannot compile without it.
+//go:embed zcl_adt_00_amdp_test.clas.abap
+var ZclAdt00AmdpTest string
+
 //go:embed zcl_vsp_git_service.clas.abap
 var ZclVspGitService string
 
@@ -78,6 +83,13 @@ func GetObjects() []ObjectInfo {
 			Name:        "ZCL_VSP_DEBUG_SERVICE",
 			Source:      ZclVspDebugService,
 			Description: "Debug domain - TPDAPI integration",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
+			Name:        "ZCL_ADT_00_AMDP_TEST",
+			Source:      ZclAdt00AmdpTest,
+			Description: "AMDP demo class - required by the AMDP service",
 			Optional:    false,
 		},
 		{
