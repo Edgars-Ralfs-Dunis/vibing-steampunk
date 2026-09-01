@@ -101,7 +101,7 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
     FIND lv_search IN iv_params MATCH OFFSET lv_pos.
     IF sy-subrc = 0.
       DATA(lv_rest) = iv_params+lv_pos.
-      FIND PCRE ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
     ENDIF.
   ENDMETHOD.
 
@@ -109,7 +109,7 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
   METHOD extract_param_int.
     DATA lv_str TYPE string.
     DATA(lv_pattern) = |"{ iv_name }"\\s*:\\s*(\\d+)|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES lv_str.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES lv_str.
     IF sy-subrc = 0.
       rv_value = lv_str.
     ENDIF.
