@@ -7,19 +7,39 @@ import (
 	"crypto/x509"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/github/smimesign/certstore"
 )
 
-// keychainKeepAlive holds the certstore store and matched identity for the
-// process lifetime. The in-place signer references live Security.framework
-// handles; letting the store/identity be garbage-collected (or closed) would
-// invalidate the signer. vsp loads the cert once at startup and runs as a
-// daemon, so this deliberate, bounded leak is fine.
+// keychainKeepAlive holds the certstore store and matched identity behind the
+// certificate currently handed out. The in-place signer references live
+// Security.framework handles; letting the store/identity be garbage-collected
+// (or closed) would invalidate the signer, so they are kept for as long as
+// that certificate is the one in use. A refresh (the SLC leaf rolls roughly
+// daily) swaps in the new pair and closes the old one, instead of leaking a
+// store handle per reload as the first version did.
 var keychainKeepAlive struct {
+	mu    sync.Mutex
 	store certstore.Store
 	ident certstore.Identity
+}
+
+// retainKeychainIdentity makes store/ident the pair kept alive and releases
+// the previous pair. The swap happens before the release so there is never a
+// moment with nothing retained.
+func retainKeychainIdentity(store certstore.Store, ident certstore.Identity) {
+	keychainKeepAlive.mu.Lock()
+	prevStore, prevIdent := keychainKeepAlive.store, keychainKeepAlive.ident
+	keychainKeepAlive.store, keychainKeepAlive.ident = store, ident
+	keychainKeepAlive.mu.Unlock()
+	if prevIdent != nil {
+		prevIdent.Close()
+	}
+	if prevStore != nil {
+		prevStore.Close()
+	}
 }
 
 // LoadKeychainClientCert finds a valid keychain identity whose leaf certificate
@@ -123,8 +143,7 @@ func loadKeychainIdentity(desc string, pred func(*x509.Certificate) bool) (*tls.
 		cert.Certificate = append(cert.Certificate, c.Raw)
 	}
 
-	// keep the store + matched identity alive for the process lifetime
-	keychainKeepAlive.store = store
-	keychainKeepAlive.ident = best
+	// keep the store + matched identity alive while this cert is in use
+	retainKeychainIdentity(store, best)
 	return cert, nil
 }
