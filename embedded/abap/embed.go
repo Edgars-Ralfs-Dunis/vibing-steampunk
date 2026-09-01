@@ -35,12 +35,19 @@ var ZclVspGitService string
 //go:embed zcl_vsp_report_service.clas.abap
 var ZclVspReportService string
 
+// Batch step scheduled by ZCL_VSP_REPORT_SERVICE: SUBMIT and spool reading are
+// APC_ILLEGAL_STATEMENT inside the APC session, so the report runs here and its
+// list is handed back through INDX. References zcl_vsp_report_service=>ty_capture_instr,
+// so it must be deployed after the report service.
+//go:embed zvsp_run_capture.prog.abap
+var ZvspRunCapture string
+
 //go:embed zcl_vsp_apc_handler.clas.abap
 var ZclVspApcHandler string
 
 // ObjectInfo describes an embedded ABAP object.
 type ObjectInfo struct {
-	Type        string // INTF or CLAS
+	Type        string // INTF, CLAS or PROG
 	Name        string // Object name (e.g., ZIF_VSP_SERVICE)
 	Source      string // Source code
 	Description string // Human-readable description
@@ -111,6 +118,13 @@ func GetObjects() []ObjectInfo {
 			Name:        "ZCL_VSP_REPORT_SERVICE",
 			Source:      ZclVspReportService,
 			Description: "Report domain - background job execution with spool output",
+			Optional:    false,
+		},
+		{
+			Type:        "PROG",
+			Name:        "ZVSP_RUN_CAPTURE",
+			Source:      ZvspRunCapture,
+			Description: "Batch wrapper - runs a report and captures its list for the report domain",
 			Optional:    false,
 		},
 		{
