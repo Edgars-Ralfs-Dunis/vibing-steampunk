@@ -18,6 +18,7 @@ func (s *Server) newBridge(client string) *adt.AMDPWebSocketClient {
 	b := adt.NewAMDPWebSocketClient(
 		s.config.BaseURL, client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 	)
+	s.applyWSAuth(b.SetCookies)
 	if s.config.ClientCertProvider != nil {
 		b.SetClientCertProvider(s.config.ClientCertProvider)
 	} else if s.config.ClientCert != nil {
@@ -125,6 +126,7 @@ func (s *Server) newDebugBridge(client string) *adt.DebugWebSocketClient {
 	b := adt.NewDebugWebSocketClient(
 		s.config.BaseURL, client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 	)
+	s.applyWSAuth(b.SetCookies)
 	if s.config.ClientCertProvider != nil {
 		b.SetClientCertProvider(s.config.ClientCertProvider)
 	} else if s.config.ClientCert != nil {
