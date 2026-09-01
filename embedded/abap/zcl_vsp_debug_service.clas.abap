@@ -753,6 +753,7 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
     lv_statement = extract_param( iv_params = is_message-params iv_name = 'statement' ).
     lv_condition = extract_param( iv_params = is_message-params iv_name = 'condition' ).
     lv_program = extract_param( iv_params = is_message-params iv_name = 'program' ).
+    DATA(lv_method) = extract_param( iv_params = is_message-params iv_name = 'method' ).
 
     IF lv_kind IS INITIAL.
       lv_kind = 'line'.
@@ -824,10 +825,59 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
 
         CASE lv_kind.
           WHEN 'line'.
-            lo_bp ?= lo_bp_services->create_line_breakpoint(
-              i_main_program = lv_program
-              i_line_nr      = lv_line
-            ).
+            " method-relative breakpoints: resolve METHOD -> class-pool include.
+            " TPDAPI interprets a bare i_main_program + line against the pool
+            " frame program (just INCLUDE lines), so method lines NEVER land
+            " without i_include.
+            DATA lv_include TYPE programm.
+            CLEAR lv_include.
+            IF lv_method IS NOT INITIAL.
+              DATA lv_class TYPE string.
+              lv_class = lv_program.
+              IF strlen( lv_class ) = 32 AND lv_class+30(2) = 'CP'.
+                lv_class = lv_class(30).
+                REPLACE REGEX '=+$' IN lv_class WITH ''.
+              ENDIF.
+              DATA ls_mtdkey TYPE seocpdkey.
+              ls_mtdkey-clsname = lv_class.
+              ls_mtdkey-cpdname = lv_method.
+              TRANSLATE ls_mtdkey-clsname TO UPPER CASE.
+              TRANSLATE ls_mtdkey-cpdname TO UPPER CASE.
+              CALL METHOD cl_oo_classname_service=>get_method_include
+                EXPORTING
+                  mtdkey              = ls_mtdkey
+                RECEIVING
+                  result              = lv_include
+                EXCEPTIONS
+                  class_not_existing  = 1
+                  method_not_existing = 2
+                  OTHERS              = 3.
+              IF sy-subrc <> 0.
+                rs_response = error_response(
+                  iv_id      = is_message-id
+                  iv_code    = 'METHOD_NOT_FOUND'
+                  iv_message = |Method { ls_mtdkey-cpdname } not found in class { ls_mtdkey-clsname }|
+                ).
+                RETURN.
+              ENDIF.
+              " tolerate bare class names from older clients: main program
+              " must be the class pool
+              IF NOT ( strlen( lv_program ) = 32 AND lv_program+30(2) = 'CP' ).
+                lv_program = |{ ls_mtdkey-clsname WIDTH = 30 PAD = '=' }CP|.
+              ENDIF.
+            ENDIF.
+            IF lv_include IS INITIAL.
+              lo_bp ?= lo_bp_services->create_line_breakpoint(
+                i_main_program = lv_program
+                i_line_nr      = lv_line
+              ).
+            ELSE.
+              lo_bp ?= lo_bp_services->create_line_breakpoint(
+                i_main_program = lv_program
+                i_include      = lv_include
+                i_line_nr      = lv_line
+              ).
+            ENDIF.
 
           WHEN 'exception'.
             lo_bp ?= lo_bp_services->create_exception_breakpoint(
@@ -1003,14 +1053,14 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
   METHOD extract_param.
     DATA lv_pattern TYPE string.
     lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES rv_value.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
   ENDMETHOD.
 
   METHOD extract_param_int.
     DATA lv_pattern TYPE string.
     DATA lv_str TYPE string.
     lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES lv_str.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES lv_str.
     IF sy-subrc = 0.
       rv_value = lv_str.
     ENDIF.

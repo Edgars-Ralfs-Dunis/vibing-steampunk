@@ -192,8 +192,9 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     DATA lo_data TYPE REF TO data.
     DATA lv_val TYPE string.
     FIELD-SYMBOLS <fs_val> TYPE any.
+    FIELD-SYMBOLS <fs_tab> TYPE ANY TABLE.
+    FIELD-SYMBOLS <fs_row> TYPE any.
 
-    " Function's IMPORT params: we EXPORT values TO the function
     LOOP AT lt_import INTO DATA(ls_imp).
       CLEAR: ls_ptab, lo_data, lv_val.
       lo_data = create_param_data( ls_imp ).
@@ -215,7 +216,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Function's EXPORT params: we IMPORT values FROM the function
     LOOP AT lt_export INTO DATA(ls_exp).
       CLEAR: ls_ptab, lo_data.
       lo_data = create_param_data( ls_exp ).
@@ -227,7 +227,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " TABLES params: create internal tables
     LOOP AT lt_tables INTO DATA(ls_tbl).
       CLEAR: ls_ptab, lo_data.
       lo_data = create_table_data( ls_tbl ).
@@ -311,7 +310,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
 
     lv_first = abap_true.
     LOOP AT lt_ptab INTO ls_out WHERE kind = abap_func_tables.
-      ASSIGN ls_out-value->* TO FIELD-SYMBOL(<fs_tab>).
+      ASSIGN ls_out-value->* TO <fs_tab>.
       IF sy-subrc = 0.
         IF lv_first = abap_false.
           lv_json = |{ lv_json },|.
@@ -322,7 +321,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
         DATA lv_row_first TYPE abap_bool.
         lv_row_first = abap_true.
         TRY.
-            LOOP AT <fs_tab> ASSIGNING FIELD-SYMBOL(<fs_row>).
+            LOOP AT <fs_tab> ASSIGNING <fs_row>.
               IF lv_row_first = abap_false.
                 lv_json = |{ lv_json },|.
               ENDIF.
