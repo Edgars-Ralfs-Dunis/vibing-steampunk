@@ -17,7 +17,7 @@ func TestGetObjects_AllHaveSourceAndDescription(t *testing.T) {
 		if obj.Description == "" {
 			t.Errorf("%s: empty Description — create path will silently no-op", obj.Name)
 		}
-		if obj.Type != "CLAS" && obj.Type != "INTF" {
+		if obj.Type != "CLAS" && obj.Type != "INTF" && obj.Type != "PROG" {
 			t.Errorf("%s: unexpected Type %q", obj.Name, obj.Type)
 		}
 	}
