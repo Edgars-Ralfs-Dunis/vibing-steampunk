@@ -740,3 +740,25 @@ const divergencePoint = findFirstDifference(variants[0].trace, variants[1].trace
 - `reports/2025-12-18-002-websocket-rfc-handler.md` - RFC domain documentation
 - `reports/2025-12-05-013-ai-powered-rca-workflows.md` - RCA workflow design
 - `reports/2025-12-05-014-debugger-scripting-vision.md` - Debugger scripting architecture
+
+---
+
+## Report domain: `ZVSP_RUN_CAPTURE` (2026-09-01)
+
+`SUBMIT`, `CALL FUNCTION … DESTINATION` and every standard spool reader
+(`RSPO_RETURN_ABAP_SPOOLJOB` / `RSPO_RETURN_SPOOLJOB` both `SUBMIT rspolist`)
+are `APC_ILLEGAL_STATEMENT` inside the ZADT_VSP APC session on kernel 754.
+`RunReport` therefore never runs or reads anything in the session:
+
+1. `ZCL_VSP_REPORT_SERVICE` does `JOB_OPEN`, parks the instruction (report,
+   variant, selection table) in `INDX` area `ZV` under `VSPI<jobcount><sdldate>`,
+   then `JOB_SUBMIT`s **`ZVSP_RUN_CAPTURE`** as the step and `JOB_CLOSE`s.
+2. The wrapper (batch, where all of it is legal) `SUBMIT`s the target
+   `EXPORTING LIST TO MEMORY`, converts with `LIST_TO_ASCI`, stores the lines under
+   `VSPO<jobcount><sdldate>`, and `WRITE`s them again so SM37 keeps a spool.
+3. `getJobStatus` returns that `VSPO…` key as the spool id; `getSpoolOutput`
+   serves it from `INDX` and deletes it. Numeric TemSe spool ids are refused
+   with `SPOOL_READ_UNSUPPORTED`. The Go side is unchanged.
+
+`ZVSP_RPT` / `Z_VSP_RUN_REPORT_JOB` (the earlier `DESTINATION 'NONE'` wrapper)
+are obsolete and no longer deployed.
