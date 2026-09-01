@@ -65,14 +65,7 @@ func LoadKeychainClientCertByIssuer(issuerCN string) (*tls.Certificate, error) {
 func LoadKeychainClientCertByIssuers(issuerCNs []string) (*tls.Certificate, error) {
 	return loadKeychainIdentity(
 		fmt.Sprintf("Issuer CN in %q", issuerCNs),
-		func(c *x509.Certificate) bool {
-			for _, cn := range issuerCNs {
-				if c.Issuer.CommonName == cn {
-					return true
-				}
-			}
-			return false
-		},
+		issuerIn(issuerCNs),
 	)
 }
 
@@ -91,12 +84,15 @@ func loadKeychainIdentity(desc string, pred func(*x509.Certificate) bool) (*tls.
 	}
 
 	now := time.Now()
-	var best certstore.Identity
-	var bestLeaf *x509.Certificate
+	leaves := make([]*x509.Certificate, len(idents))
 	var seen []string // what IS in the keychain, for the no-match error
-	for _, id := range idents {
+	for i, id := range idents {
 		crt, err := id.Certificate()
-		if err == nil && len(seen) < 10 {
+		if err != nil {
+			continue // leaves[i] stays nil and freshestValid skips it
+		}
+		leaves[i] = crt
+		if len(seen) < 10 {
 			state := "valid"
 			if now.After(crt.NotAfter) {
 				state = "EXPIRED " + crt.NotAfter.Format("2006-01-02 15:04")
@@ -104,18 +100,19 @@ func loadKeychainIdentity(desc string, pred func(*x509.Certificate) bool) (*tls.
 			seen = append(seen, fmt.Sprintf("Subject CN=%q Issuer CN=%q (%s)",
 				crt.Subject.CommonName, crt.Issuer.CommonName, state))
 		}
-		if err != nil || !pred(crt) || now.Before(crt.NotBefore) || now.After(crt.NotAfter) {
-			id.Close()
+	}
+
+	// The rule itself lives in keychain_select.go, where it can be tested
+	// without a keychain; this file only owns the Security.framework handles.
+	pick := freshestValid(now, leaves, pred)
+	var best certstore.Identity
+	var bestLeaf *x509.Certificate
+	for i, id := range idents {
+		if i == pick {
+			best, bestLeaf = id, leaves[i]
 			continue
 		}
-		if bestLeaf == nil || crt.NotBefore.After(bestLeaf.NotBefore) {
-			if best != nil {
-				best.Close()
-			}
-			best, bestLeaf = id, crt
-		} else {
-			id.Close()
-		}
+		id.Close()
 	}
 
 	if best == nil {
