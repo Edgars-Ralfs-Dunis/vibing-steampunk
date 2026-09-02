@@ -1,6 +1,7 @@
 package adt
 
 import (
+	"bytes"
 	"crypto/x509"
 	"time"
 )
@@ -37,4 +38,29 @@ func freshestValid(now time.Time, leaves []*x509.Certificate, pred func(*x509.Ce
 		}
 	}
 	return best
+}
+
+// chainFor returns leaf followed by its issuers found in pool, nearest first,
+// stopping before a self-signed root, which the server holds anyway. The
+// keychain keeps the SLS intermediates next to the identity, and sending
+// them lets an ICM whose PSE trusts only the root still verify the client.
+// A candidate counts only if it actually signed the previous link, so two
+// CAs sharing a name cannot be confused.
+func chainFor(leaf *x509.Certificate, pool []*x509.Certificate) []*x509.Certificate {
+	chain := []*x509.Certificate{leaf}
+	for cur := leaf; len(chain) < 8; {
+		var issuer *x509.Certificate
+		for _, c := range pool {
+			if c != cur && bytes.Equal(c.RawSubject, cur.RawIssuer) && cur.CheckSignatureFrom(c) == nil {
+				issuer = c
+				break
+			}
+		}
+		if issuer == nil || bytes.Equal(issuer.RawSubject, issuer.RawIssuer) {
+			break
+		}
+		chain = append(chain, issuer)
+		cur = issuer
+	}
+	return chain
 }
