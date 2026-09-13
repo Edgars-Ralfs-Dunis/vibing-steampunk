@@ -14,6 +14,9 @@ func testServer() *Server {
 	s := &Server{config: &Config{}}
 	s.config.Client = "050"
 	s.config.BaseURL = "https://example.invalid:44300"
+	// A new bridge copies the ADT client's live session (applyWSAuth), so the
+	// server needs one. Constructing it dials nothing.
+	s.adtClient = adt.NewClient(s.config.BaseURL, "", "")
 	s.bridgePool = make(map[string]*adt.AMDPWebSocketClient)
 	s.debugBridgePool = make(map[string]*adt.DebugWebSocketClient)
 	return s
