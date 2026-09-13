@@ -161,7 +161,15 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 		return "", err
 	}
 
-	results, err := c.SearchObject(ctx, objectName, 20)
+	// Stateful, because this lookup runs inside lock windows the gate cannot
+	// see: the MCP tools that take their own lock and any caller holding a
+	// lock_handle from LockObject reach the mutator's full gate after the LOCK.
+	// A stateless request there retires the session the handle lives in and the
+	// write answers 423 ExceptionResourceInvalidLockHandle. The marker in
+	// mutation_gate_marker.go skips this lookup for the windows the workflows
+	// own; this covers the ones they do not. Seen on ZES 050 (NW 7.50) with
+	// SAP_ALLOWED_PACKAGES=Z*: DeleteObject failed on every object.
+	results, err := c.searchObjectByType(ctx, objectName, "", 20, true)
 	if err != nil {
 		return "", err
 	}
@@ -356,6 +364,12 @@ func CanonicalObjectType(s string) string {
 // maxResults: filtering after the fact silently drops results that didn't
 // fit in the pre-filter window.
 func (c *Client) SearchObjectByType(ctx context.Context, query, objectType string, maxResults int) ([]SearchResult, error) {
+	return c.searchObjectByType(ctx, query, objectType, maxResults, false)
+}
+
+// searchObjectByType is SearchObjectByType with the session type chosen by the
+// caller. Only a lookup that can run inside a lock window needs stateful.
+func (c *Client) searchObjectByType(ctx context.Context, query, objectType string, maxResults int, stateful bool) ([]SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 100
 	}
@@ -374,9 +388,10 @@ func (c *Client) SearchObjectByType(ctx context.Context, query, objectType strin
 	}
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/repository/informationsystem/search", &RequestOptions{
-		Method: http.MethodGet,
-		Query:  params,
-		Accept: "application/xml",
+		Method:   http.MethodGet,
+		Query:    params,
+		Accept:   "application/xml",
+		Stateful: stateful,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search request failed: %w", err)
