@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"crypto/tls"
 	"github.com/joho/godotenv"
 	"github.com/oisee/vibing-steampunk/internal/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"crypto/tls"
 )
 
 var (
@@ -234,7 +234,6 @@ func init() {
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("SAP")
 }
-
 
 // splitTrim splits a comma-separated list, trimming whitespace and dropping
 // empty entries.

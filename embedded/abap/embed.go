@@ -26,6 +26,7 @@ var ZclVspAmdpService string
 
 // Referenced STATICALLY by ZCL_VSP_AMDP_SERVICE (zcl_adt_00_amdp_test=>tt_result
 // and =>calculate_squares), so the AMDP service cannot compile without it.
+//
 //go:embed zcl_adt_00_amdp_test.clas.abap
 var ZclAdt00AmdpTest string
 
@@ -39,6 +40,7 @@ var ZclVspReportService string
 // APC_ILLEGAL_STATEMENT inside the APC session, so the report runs here and its
 // list is handed back through INDX. References zcl_vsp_report_service=>ty_capture_instr,
 // so it must be deployed after the report service.
+//
 //go:embed zvsp_run_capture.prog.abap
 var ZvspRunCapture string
 

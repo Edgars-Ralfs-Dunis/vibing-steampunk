@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
-	"time"
 	"sync"
+	"time"
 )
 
 // SessionType defines how the client manages server sessions.
