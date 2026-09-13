@@ -41,8 +41,11 @@ func TestExtractDependencies_APCHandler(t *testing.T) {
 		"ZCL_VSP_RFC_SERVICE":          KindClass,
 		"ZCL_VSP_DEBUG_SERVICE":        KindClass,
 		"ZCL_VSP_AMDP_SERVICE":         KindClass,
-		"ZCL_VSP_GIT_SERVICE":          KindClass,
 		"ZCL_VSP_REPORT_SERVICE":       KindClass,
+		// ZCL_VSP_GIT_SERVICE is deliberately absent: the handler binds it
+		// dynamically (CREATE OBJECT ... TYPE ('ZCL_VSP_GIT_SERVICE')) so the
+		// bridge still compiles on a system without abapGit, and a class named
+		// in a string literal is not a static dependency.
 	}
 
 	for name, kind := range expect {
