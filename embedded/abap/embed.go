@@ -169,7 +169,12 @@ func PostDeploymentInstructions() string {
    a. SU21: object class ZADT, object Z_ADT_HTTP, field ACTVT, permitted 16
    b. SU02: single profile ZADT_ACC containing Z_ADT_HTTP ACTVT 16; assign it
       directly (SU01) to approved users only.
-   c. Optional, to gate /sap/bc/adt over HTTP too: SICF → /sap/bc/adt →
+   c. Optional, to allow reading other clients in data preview (CLIENT
+      SPECIFIED) over HTTP: SU21 object Z_ADT_XCLI (class ZADT, ACTVT 03),
+      single profile ZADT_XCLI containing it, assigned directly. Without it
+      the gate answers 403 to any data-preview SQL that names other clients;
+      everyone else reads a client by logging on to it.
+   d. Optional, to gate /sap/bc/adt over HTTP too: SICF → /sap/bc/adt →
       Handler List → ZCL_ADT_HTTP_GATE at position 1, before CL_ADT_WB_RES_APP.
       Eclipse ADT uses RFC and is not affected. This is a modification of an
       SAP node; a support package can reset it.
