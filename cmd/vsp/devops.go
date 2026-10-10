@@ -486,9 +486,9 @@ Deploys 12 ABAP objects (1 interface, 10 classes, 1 program) in dependency order
   ZCL_VSP_GIT_SERVICE, ZCL_VSP_REPORT_SERVICE, ZVSP_RUN_CAPTURE,
   ZCL_ADT_HTTP_GATE, ZCL_VSP_APC_HANDLER
 
-The bridge refuses every user without authorization object Z_ADT_HTTP
-(ACTVT 16). Create it in SU21 and grant it before using the bridge; the
-post-install instructions list the steps.
+The bridge refuses every user who lacks authorization object Z_ADT_HTTP
+(ACTVT 16) or a direct assignment of profile ZADT_ACC. Set both up before
+using the bridge; the post-install instructions list the steps.
 
 Features unlocked after install:
   - WebSocket debugging (TPDAPI)

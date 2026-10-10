@@ -163,11 +163,12 @@ func PostDeploymentInstructions() string {
 0. ACCESS GATE (do this first - the bridge refuses everyone until it is done)
    ──────────────────────────────────────────────────────────────────────────
    ZCL_VSP_APC_HANDLER rejects the WebSocket handshake unless the user holds
-   authorization object Z_ADT_HTTP (ZCL_ADT_HTTP_GATE=>IS_AUTHORIZED). It fails
-   closed: while the object does not exist, nobody gets in.
+   authorization object Z_ADT_HTTP AND has profile ZADT_ACC assigned directly
+   (ZCL_ADT_HTTP_GATE=>IS_AUTHORIZED). It fails closed: while either is
+   missing, nobody gets in. SAP_ALL alone never passes, even once regenerated.
    a. SU21: object class ZADT, object Z_ADT_HTTP, field ACTVT, permitted 16
-   b. Grant Z_ADT_HTTP ACTVT 16 only to approved users (a profile or role).
-      SAP_ALL includes it only after SAP_ALL is regenerated.
+   b. SU02: single profile ZADT_ACC containing Z_ADT_HTTP ACTVT 16; assign it
+      directly (SU01) to approved users only.
    c. Optional, to gate /sap/bc/adt over HTTP too: SICF → /sap/bc/adt →
       Handler List → ZCL_ADT_HTTP_GATE at position 1, before CL_ADT_WB_RES_APP.
       Eclipse ADT uses RFC and is not affected. This is a modification of an
