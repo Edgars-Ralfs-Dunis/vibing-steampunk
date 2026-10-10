@@ -138,6 +138,24 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       mv_debug_user = sy-uname.
     ENDIF.
 
+    " TPDAPI checks the debuggee's user (SUSR_CHECK_DEBUG_ABILITY), never the
+    " caller. Without this, a user with no debug authorization could listen
+    " for and step through another user's sessions via the 'user' parameter.
+    AUTHORITY-CHECK OBJECT 'S_DEVELOP'
+      ID 'DEVCLASS' DUMMY
+      ID 'OBJTYPE'  FIELD 'DEBUG'
+      ID 'OBJNAME'  DUMMY
+      ID 'P_GROUP'  DUMMY
+      ID 'ACTVT'    FIELD '03'.
+    IF sy-subrc <> 0.
+      rs_response = error_response(
+        iv_id      = is_message-id
+        iv_code    = 'NO_AUTHORITY'
+        iv_message = |No debug authorization (S_DEVELOP OBJTYPE DEBUG ACTVT 03)|
+      ).
+      RETURN.
+    ENDIF.
+
     CASE is_message-action.
       WHEN 'setBreakpoint'.
         rs_response = handle_set_breakpoint( is_message ).

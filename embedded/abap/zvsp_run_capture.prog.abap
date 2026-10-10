@@ -67,6 +67,13 @@ START-OF-SELECTION.
 
   MESSAGE i398(00) WITH 'ZVSP_RUN_CAPTURE: running' gs_instr-report gs_instr-variant.
 
+  " A plain SUBMIT checks no authorization, and this job runs as the
+  " user who scheduled it - so check here, where the SUBMIT happens.
+  DATA(gv_auth_error) = zcl_vsp_utils=>check_submit_authority( gs_instr-report ).
+  IF gv_auth_error IS NOT INITIAL.
+    MESSAGE gv_auth_error TYPE 'E'.
+  ENDIF.
+
   " seed the target's real selection skeleton so every field gets its
   " correct KIND (P for PARAMETERS, S for SELECT-OPTIONS), then overlay
   " the caller's values by SELNAME

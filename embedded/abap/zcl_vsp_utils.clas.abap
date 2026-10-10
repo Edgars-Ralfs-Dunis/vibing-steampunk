@@ -76,6 +76,28 @@ CLASS zcl_vsp_utils DEFINITION
       IMPORTING it_parts       TYPE string_table
       RETURNING VALUE(rv_json) TYPE string.
 
+    " Authorization checks for bridge actions that execute code. The
+    " bridge runs function modules locally and reports via a plain
+    " SUBMIT, and neither performs a check of its own. Each method
+    " returns an error text, or an initial string when authorized.
+    "! S_RFC check for a function module called through the bridge
+    CLASS-METHODS check_rfc_authority
+      IMPORTING iv_function     TYPE rs38l_fnam
+      RETURNING VALUE(rv_error) TYPE string.
+
+    "! S_PROGRAM / S_PROGNAM check for a report run through the bridge
+    CLASS-METHODS check_submit_authority
+      IMPORTING iv_report       TYPE progname
+      RETURNING VALUE(rv_error) TYPE string.
+
+    "! S_DEVELOP check for a repository change made through the bridge
+    CLASS-METHODS check_develop_authority
+      IMPORTING iv_object       TYPE trobjtype
+                iv_obj_name     TYPE sobj_name
+                iv_devclass     TYPE devclass OPTIONAL
+                iv_actvt        TYPE activ_auth DEFAULT '02'
+      RETURNING VALUE(rv_error) TYPE string.
+
 ENDCLASS.
 
 
@@ -214,6 +236,139 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
       rv_json = |{ rv_json }{ lv_part }|.
       lv_first = abap_false.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD check_rfc_authority.
+    " The same S_RFC check the RFC runtime performs for a remote call,
+    " including the auth/rfc_authority_check setting and SRFC exemptions.
+    CALL FUNCTION 'AUTHORITY_CHECK_RFC'
+      EXPORTING
+        functionname       = iv_function
+      EXCEPTIONS
+        function_not_exist = 1
+        user_dont_exist    = 2
+        rfc_no_authority   = 3
+        OTHERS             = 4.
+    CASE sy-subrc.
+      WHEN 0.
+        RETURN.
+      WHEN 1.
+        rv_error = |Function { iv_function } not found|.
+      WHEN OTHERS.
+        rv_error = |No RFC authorization for function { iv_function }| &&
+                   | (S_RFC ACTVT 16, function or its function group)|.
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD check_submit_authority.
+    " What SA38 checks before starting a report (SUBMIT_REPORT), plus
+    " background scheduling, because RunReport always runs a job.
+    SELECT SINGLE secu FROM trdir
+      WHERE name = @iv_report
+      INTO @DATA(lv_secu).
+    IF sy-subrc <> 0.
+      rv_error = |Report { iv_report } not found|.
+      RETURN.
+    ENDIF.
+
+    " Starting SA38/SE38 needs S_TCODE, which a SUBMIT never checks. Without
+    " this, a user who can start neither could still run every report that
+    " has no authorization group through the bridge.
+    CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+      EXPORTING
+        tcode  = 'SA38'
+      EXCEPTIONS
+        ok     = 0
+        not_ok = 1
+        OTHERS = 2.
+    IF sy-subrc <> 0.
+      CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+        EXPORTING
+          tcode  = 'SE38'
+        EXCEPTIONS
+          ok     = 0
+          not_ok = 1
+          OTHERS = 2.
+    ENDIF.
+    IF sy-subrc <> 0.
+      rv_error = |No authorization to run reports (S_TCODE SA38 or SE38)|.
+      RETURN.
+    ENDIF.
+
+    IF lv_secu IS NOT INITIAL.
+      AUTHORITY-CHECK OBJECT 'S_PROGRAM'
+        ID 'P_GROUP'  FIELD lv_secu
+        ID 'P_ACTION' FIELD 'SUBMIT'.
+      IF sy-subrc = 0.
+        AUTHORITY-CHECK OBJECT 'S_PROGRAM'
+          ID 'P_GROUP'  FIELD lv_secu
+          ID 'P_ACTION' FIELD 'BTCSUBMIT'.
+      ENDIF.
+      IF sy-subrc <> 0.
+        rv_error = |No authorization to run report { iv_report }| &&
+                   | (S_PROGRAM P_GROUP { lv_secu },| &&
+                   | P_ACTION SUBMIT and BTCSUBMIT)|.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    " Switchable allowlist (SACF) for generic report start; inert
+    " unless the scenario is active.
+    TRY.
+        cl_sabe=>auth_check_progname(
+          i_scenario_name = 'BC_GENERIC_REPORT_START'
+          i_program_name  = iv_report
+          i_action        = 'SUBMIT' ).
+      CATCH cx_sabe.
+        rv_error = |Report { iv_report } is not allowed for generic| &&
+                   | start (S_PROGNAM, SACF BC_GENERIC_REPORT_START)|.
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD check_develop_authority.
+    " Repository changes made through the bridge bypass the workbench,
+    " so check S_DEVELOP as SE80 would. The package defaults to the
+    " object's current TADIR package; pass one to check a target package.
+    DATA lv_secu TYPE trdir-secu.
+
+    DATA(lv_devclass) = iv_devclass.
+    IF lv_devclass IS INITIAL.
+      SELECT SINGLE devclass FROM tadir
+        WHERE pgmid    = 'R3TR'
+          AND object   = @iv_object
+          AND obj_name = @iv_obj_name
+        INTO @lv_devclass.
+      IF sy-subrc <> 0.
+        rv_error = |Object { iv_object } { iv_obj_name } not found in TADIR|.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    IF iv_object = 'PROG'.
+      SELECT SINGLE secu FROM trdir
+        WHERE name = @iv_obj_name
+        INTO @lv_secu.
+      AUTHORITY-CHECK OBJECT 'S_DEVELOP'
+        ID 'DEVCLASS' FIELD lv_devclass
+        ID 'OBJTYPE'  FIELD iv_object
+        ID 'OBJNAME'  FIELD iv_obj_name
+        ID 'P_GROUP'  FIELD lv_secu
+        ID 'ACTVT'    FIELD iv_actvt.
+    ELSE.
+      AUTHORITY-CHECK OBJECT 'S_DEVELOP'
+        ID 'DEVCLASS' FIELD lv_devclass
+        ID 'OBJTYPE'  FIELD iv_object
+        ID 'OBJNAME'  FIELD iv_obj_name
+        ID 'P_GROUP'  DUMMY
+        ID 'ACTVT'    FIELD iv_actvt.
+    ENDIF.
+    IF sy-subrc <> 0.
+      rv_error = |No authorization for { iv_object } { iv_obj_name }| &&
+                 | (S_DEVELOP ACTVT { iv_actvt }, package { lv_devclass })|.
+    ENDIF.
   ENDMETHOD.
 
 ENDCLASS.

@@ -438,6 +438,14 @@ CLASS ZCL_VSP_REPORT_SERVICE IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Checked here for a clean error; ZVSP_RUN_CAPTURE checks again
+    " where the SUBMIT actually happens.
+    DATA(lv_auth_error) = zcl_vsp_utils=>check_submit_authority( lv_report ).
+    IF lv_auth_error IS NOT INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'NO_AUTHORITY' iv_message = lv_auth_error ).
+      RETURN.
+    ENDIF.
+
     " optional selection params {"P_NAME":"value",...} -> RSPARAMS rows;
     " the wrapper seeds the correct KIND (P/S) from the report's own screen.
     IF lv_params_json IS NOT INITIAL.
@@ -557,6 +565,26 @@ CLASS ZCL_VSP_REPORT_SERVICE IMPLEMENTATION.
 
     TRANSLATE lv_prog_str TO UPPER CASE.
     lv_program = lv_prog_str.
+
+    " INSERT TEXTPOOL below changes the repository object that owns the
+    " text pool: a program, a function group (SAPL*) or a class (*=CP).
+    DATA lv_tr_object TYPE trobjtype VALUE 'PROG'.
+    DATA lv_tr_name   TYPE sobj_name.
+    lv_tr_name = lv_program.
+    IF lv_program CP 'SAPL*'.
+      lv_tr_object = 'FUGR'.
+      lv_tr_name = lv_program+4.
+    ELSEIF lv_program CP '*=CP'.
+      lv_tr_object = 'CLAS'.
+      lv_tr_name = substring_before( val = lv_prog_str sub = '=' ).
+    ENDIF.
+    DATA(lv_auth_error) = zcl_vsp_utils=>check_develop_authority(
+                            iv_object   = lv_tr_object
+                            iv_obj_name = lv_tr_name ).
+    IF lv_auth_error IS NOT INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'NO_AUTHORITY' iv_message = lv_auth_error ).
+      RETURN.
+    ENDIF.
 
     DATA lv_lang TYPE sy-langu.
     IF lv_language IS NOT INITIAL.

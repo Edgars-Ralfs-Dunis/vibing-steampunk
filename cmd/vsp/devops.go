@@ -480,10 +480,15 @@ var installZadtVspCmd = &cobra.Command{
 	Short: "Install ZADT_VSP WebSocket handler",
 	Long: `Install the ZADT_VSP WebSocket handler to enable advanced features.
 
-Deploys 9 ABAP objects (1 interface, 8 classes) in dependency order:
+Deploys 12 ABAP objects (1 interface, 10 classes, 1 program) in dependency order:
   ZIF_VSP_SERVICE, ZCL_VSP_UTILS, ZADT_CL_TADIR_MOVE, ZCL_VSP_RFC_SERVICE,
-  ZCL_VSP_DEBUG_SERVICE, ZCL_VSP_AMDP_SERVICE, ZCL_VSP_GIT_SERVICE,
-  ZCL_VSP_REPORT_SERVICE, ZCL_VSP_APC_HANDLER
+  ZCL_VSP_DEBUG_SERVICE, ZCL_ADT_00_AMDP_TEST, ZCL_VSP_AMDP_SERVICE,
+  ZCL_VSP_GIT_SERVICE, ZCL_VSP_REPORT_SERVICE, ZVSP_RUN_CAPTURE,
+  ZCL_ADT_HTTP_GATE, ZCL_VSP_APC_HANDLER
+
+The bridge refuses every user without authorization object Z_ADT_HTTP
+(ACTVT 16). Create it in SU21 and grant it before using the bridge; the
+post-install instructions list the steps.
 
 Features unlocked after install:
   - WebSocket debugging (TPDAPI)

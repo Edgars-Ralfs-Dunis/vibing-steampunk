@@ -8,6 +8,7 @@ CLASS zcl_vsp_apc_handler DEFINITION
   CREATE PUBLIC.
 
   PUBLIC SECTION.
+    METHODS if_apc_wsp_extension~on_accept REDEFINITION.
     METHODS if_apc_wsp_extension~on_start REDEFINITION.
     METHODS if_apc_wsp_extension~on_message REDEFINITION.
     METHODS if_apc_wsp_extension~on_close REDEFINITION.
@@ -70,6 +71,18 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ENDTRY.
     APPEND NEW zcl_vsp_report_service( ) TO gt_services.
   ENDMETHOD.
+
+  METHOD if_apc_wsp_extension~on_accept.
+    " Same rule as /sap/bc/adt (ZCL_ADT_HTTP_GATE): without Z_ADT_HTTP the
+    " WebSocket handshake is refused, before any RFC/report/debug service
+    " is reachable. An already open bridge keeps running until it closes.
+    IF zcl_adt_http_gate=>is_authorized( ) = abap_true.
+      e_connect_mode = if_apc_wsp_extension=>co_connect_mode_accept.
+    ELSE.
+      e_connect_mode = if_apc_wsp_extension=>co_connect_mode_reject.
+    ENDIF.
+  ENDMETHOD.
+
 
   METHOD if_apc_wsp_extension~on_start.
     mo_context = i_context.

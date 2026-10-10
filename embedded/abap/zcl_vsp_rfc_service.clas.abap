@@ -142,6 +142,22 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     TRANSLATE lv_obj_name TO UPPER CASE.
     TRANSLATE lv_new_pkg TO UPPER CASE.
 
+    " Moving an object changes it in its current package and in the
+    " target package, so both need change authorization.
+    DATA(lv_auth_error) = zcl_vsp_utils=>check_develop_authority(
+                            iv_object   = CONV #( lv_object )
+                            iv_obj_name = CONV #( lv_obj_name ) ).
+    IF lv_auth_error IS INITIAL.
+      lv_auth_error = zcl_vsp_utils=>check_develop_authority(
+                        iv_object   = CONV #( lv_object )
+                        iv_obj_name = CONV #( lv_obj_name )
+                        iv_devclass = CONV #( lv_new_pkg ) ).
+    ENDIF.
+    IF lv_auth_error IS NOT INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'NO_AUTHORITY' iv_message = lv_auth_error ).
+      RETURN.
+    ENDIF.
+
     " Call ZADT_CL_TADIR_MOVE to perform the move
     DATA lv_result TYPE string.
     TRY.
@@ -183,6 +199,13 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
                            IMPORTING et_import = lt_import et_export = lt_export
                                      et_changing = lt_changing et_tables = lt_tables ) = abap_false.
       rs_response = build_error( iv_id = is_message-id iv_code = 'FUNC_NOT_FOUND' iv_message = |Function { lv_function } not found| ).
+      RETURN.
+    ENDIF.
+
+    " The call below is local, so the RFC runtime never checks S_RFC.
+    DATA(lv_auth_error) = zcl_vsp_utils=>check_rfc_authority( CONV #( lv_function ) ).
+    IF lv_auth_error IS NOT INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'NO_AUTHORITY' iv_message = lv_auth_error ).
       RETURN.
     ENDIF.
 
@@ -617,6 +640,12 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     SELECT SINGLE name FROM trdir INTO @DATA(lv_exists) WHERE name = @lv_report.
     IF sy-subrc <> 0.
       rs_response = build_error( iv_id = is_message-id iv_code = 'REPORT_NOT_FOUND' iv_message = |Report { lv_report } not found| ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_auth_error) = zcl_vsp_utils=>check_submit_authority( lv_report ).
+    IF lv_auth_error IS NOT INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'NO_AUTHORITY' iv_message = lv_auth_error ).
       RETURN.
     ENDIF.
 

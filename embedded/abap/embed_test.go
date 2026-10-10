@@ -45,3 +45,26 @@ func TestGetObjects_AmdpTestPrecedesAmdpService(t *testing.T) {
 		t.Errorf("ZCL_ADT_00_AMDP_TEST at %d must precede ZCL_VSP_AMDP_SERVICE at %d", iTest, iSvc)
 	}
 }
+
+// ZCL_VSP_APC_HANDLER=>ON_ACCEPT calls zcl_adt_http_gate=>is_authorized statically,
+// so the gate must ship AND be deployed first, or the handler cannot compile.
+func TestGetObjects_HttpGatePrecedesApcHandler(t *testing.T) {
+	iGate, iApc := -1, -1
+	for i, obj := range GetObjects() {
+		switch obj.Name {
+		case "ZCL_ADT_HTTP_GATE":
+			iGate = i
+		case "ZCL_VSP_APC_HANDLER":
+			iApc = i
+		}
+	}
+	if iGate < 0 {
+		t.Fatal("ZCL_ADT_HTTP_GATE missing from GetObjects — ZCL_VSP_APC_HANDLER cannot compile")
+	}
+	if iApc < 0 {
+		t.Fatal("ZCL_VSP_APC_HANDLER missing from GetObjects")
+	}
+	if iGate > iApc {
+		t.Errorf("ZCL_ADT_HTTP_GATE at %d must precede ZCL_VSP_APC_HANDLER at %d", iGate, iApc)
+	}
+}

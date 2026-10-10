@@ -44,6 +44,13 @@ var ZclVspReportService string
 //go:embed zvsp_run_capture.prog.abap
 var ZvspRunCapture string
 
+// Access gate: first handler on /sap/bc/adt and the rule ZCL_VSP_APC_HANDLER=>ON_ACCEPT
+// applies to the bridge handshake. Referenced statically by the APC handler, so it
+// must be deployed before it. Checks authorization object Z_ADT_HTTP and fails closed.
+//
+//go:embed zcl_adt_http_gate.clas.abap
+var ZclAdtHttpGate string
+
 //go:embed zcl_vsp_apc_handler.clas.abap
 var ZclVspApcHandler string
 
@@ -131,6 +138,13 @@ func GetObjects() []ObjectInfo {
 		},
 		{
 			Type:        "CLAS",
+			Name:        "ZCL_ADT_HTTP_GATE",
+			Source:      ZclAdtHttpGate,
+			Description: "Gate for ADT over HTTP (checks Z_ADT_HTTP)",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
 			Name:        "ZCL_VSP_APC_HANDLER",
 			Source:      ZclVspApcHandler,
 			Description: "Main APC WebSocket handler (router)",
@@ -145,6 +159,19 @@ func PostDeploymentInstructions() string {
 ═══════════════════════════════════════════════════════════════════════════════
   MANUAL STEPS REQUIRED - Complete in SAP GUI
 ═══════════════════════════════════════════════════════════════════════════════
+
+0. ACCESS GATE (do this first - the bridge refuses everyone until it is done)
+   ──────────────────────────────────────────────────────────────────────────
+   ZCL_VSP_APC_HANDLER rejects the WebSocket handshake unless the user holds
+   authorization object Z_ADT_HTTP (ZCL_ADT_HTTP_GATE=>IS_AUTHORIZED). It fails
+   closed: while the object does not exist, nobody gets in.
+   a. SU21: object class ZADT, object Z_ADT_HTTP, field ACTVT, permitted 16
+   b. Grant Z_ADT_HTTP ACTVT 16 only to approved users (a profile or role).
+      SAP_ALL includes it only after SAP_ALL is regenerated.
+   c. Optional, to gate /sap/bc/adt over HTTP too: SICF → /sap/bc/adt →
+      Handler List → ZCL_ADT_HTTP_GATE at position 1, before CL_ADT_WB_RES_APP.
+      Eclipse ADT uses RFC and is not affected. This is a modification of an
+      SAP node; a support package can reset it.
 
 1. CREATE APC APPLICATION (Transaction SAPC)
    ─────────────────────────────────────────
