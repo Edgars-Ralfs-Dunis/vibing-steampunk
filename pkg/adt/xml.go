@@ -424,9 +424,10 @@ func ParseRevisionFeed(data []byte) ([]Revision, error) {
 			Version:      entry.ID,
 			Author:       entry.Author.Name,
 		}
-		// Extract transport request from links (adtcore:name attribute)
+		// Extract transport request from links (adtcore:name attribute).
+		// Match on rel: 7.50 types the link application/vnd.sap.sapgui.
 		for _, link := range entry.Links {
-			if strings.Contains(link.Type, "transportrequests") {
+			if strings.Contains(link.Rel, "/relations/transport") {
 				if link.Name != "" {
 					rev.Transport = link.Name
 				}
