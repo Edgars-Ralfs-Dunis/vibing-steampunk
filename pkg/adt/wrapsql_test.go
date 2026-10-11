@@ -146,3 +146,21 @@ func TestDataPreviewSQLIsWrappedOrRefused(t *testing.T) {
 		t.Errorf("a statement SAP would cut was sent: %q", bodies)
 	}
 }
+
+// A blank-free word is broken after its commas only outside quotes: a literal
+// full of commas must reach SAP whole on both data preview paths. askzes
+// (ZES) and the night run (ZED, 2026-10-11) both found that wrapping at blanks
+// alone fails on a blank-free IN list; breaking after its commas fixes it.
+func TestWrapSQLNeverBreaksInsideALiteral(t *testing.T) {
+	lit := "'" + strings.Repeat("A,", 60) + "'"
+	q := "SELECT COUNT( * ) FROM t000 WHERE mtext IN (" + lit + "," + lit + "," + lit + ")"
+	w := wrapSQL(q)
+	for n, line := range strings.Split(w, "\n") {
+		if len(line) > 255 {
+			t.Errorf("line %d is %d characters", n+1, len(line))
+		}
+	}
+	if got := strings.Count(w, lit); got != 3 {
+		t.Errorf("%d of 3 comma-filled literals arrived whole:\n%s", got, w)
+	}
+}
