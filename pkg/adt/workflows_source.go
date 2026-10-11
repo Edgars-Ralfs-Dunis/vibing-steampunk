@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1563,7 +1564,7 @@ func (c *Client) GetClassInfo(ctx context.Context, className string) (*ClassInfo
 	className = strings.ToUpper(className)
 
 	// Get object structure
-	structure, err := c.GetObjectStructureCAI(ctx, className, 100)
+	structure, err := c.GetObjectStructureCAI(ctx, className, math.MaxInt)
 	if err != nil {
 		return nil, fmt.Errorf("getting class structure: %w", err)
 	}
@@ -1586,24 +1587,14 @@ func (c *Client) GetClassInfo(ctx context.Context, className string) (*ClassInfo
 			nodeName := node.Name
 
 			switch {
-			case strings.Contains(nodeType, "METHOD"):
+			case nodeType == "CLAS/OM":
 				info.Methods = append(info.Methods, nodeName)
-			case strings.Contains(nodeType, "ATTR"):
+			case nodeType == "CLAS/OA":
 				info.Attributes = append(info.Attributes, nodeName)
-			case strings.Contains(nodeType, "INTF"):
+			case nodeType == "CLAS/OR":
 				info.Interfaces = append(info.Interfaces, nodeName)
 			case strings.Contains(nodeType, "TEST"):
 				info.HasTestClass = true
-			}
-
-			// Check for superclass in description
-			if strings.Contains(strings.ToUpper(node.Description), "INHERITING") {
-				parts := strings.Fields(node.Description)
-				for i, p := range parts {
-					if strings.ToUpper(p) == "FROM" && i+1 < len(parts) {
-						info.Superclass = parts[i+1]
-					}
-				}
 			}
 
 			// Recurse into children
@@ -1615,19 +1606,26 @@ func (c *Client) GetClassInfo(ctx context.Context, className string) (*ClassInfo
 		extractInfo(structure)
 	}
 
-	// Check for abstract/final in main source (quick scan)
+	// Abstract/final/superclass from the DEFINITION statement, which runs to its
+	// period and in a global class spans lines ("DEFINITION / PUBLIC / FINAL").
 	source, err := c.GetClassSource(ctx, className)
 	if err == nil {
-		sourceUpper := strings.ToUpper(source)
-		if strings.Contains(sourceUpper, "CLASS "+className+" DEFINITION ABSTRACT") ||
-			strings.Contains(sourceUpper, "ABSTRACT DEFINITION") {
-			info.IsAbstract = true
-			info.Category = "Abstract"
+		defRe := regexp.MustCompile(`(?i)\bCLASS\s+` + regexp.QuoteMeta(className) + `\s+DEFINITION\b([^.]*)`)
+		var def []string
+		if m := defRe.FindStringSubmatch(source); m != nil {
+			def = strings.Fields(strings.ToUpper(m[1]))
 		}
-		if strings.Contains(sourceUpper, "CLASS "+className+" DEFINITION FINAL") ||
-			strings.Contains(sourceUpper, "FINAL DEFINITION") {
-			info.IsFinal = true
-			info.Category = "Final"
+		for i, tok := range def {
+			switch {
+			case tok == "ABSTRACT":
+				info.IsAbstract = true
+				info.Category = "Abstract"
+			case tok == "FINAL":
+				info.IsFinal = true
+				info.Category = "Final"
+			case tok == "FROM" && i > 0 && def[i-1] == "INHERITING" && i+1 < len(def):
+				info.Superclass = def[i+1]
+			}
 		}
 		if info.Category == "" {
 			info.Category = "Regular"

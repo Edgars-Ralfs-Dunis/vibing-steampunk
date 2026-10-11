@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,5 +90,34 @@ func TestAFullyReadFunctionGroupReportsNoGaps(t *testing.T) {
 	}
 	if !strings.Contains(source, "fmodules") || !strings.Contains(source, "includes") {
 		t.Fatalf("the concatenation should span includes and modules:\n%s", source)
+	}
+}
+
+// GetSource FUGR answers with the group's metadata and module list as JSON:
+// MCP_USAGE.md and ARCHITECTURE.md document it, and hyperfocused "read FUGR"
+// routes through GetSource, so it is the only way that mode reaches the list.
+func TestGetSourceOfAFunctionGroupIsItsModuleList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		switch r.URL.Path {
+		case "/sap/bc/adt/functions/groups/ZDEMO_FG":
+			w.Write([]byte(`<group:abapFunctionGroup xmlns:group="http://www.sap.com/adt/functions/groups" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZDEMO_FG" adtcore:type="FUGR/F"/>`))
+		case "/sap/bc/adt/repository/nodestructure":
+			w.Write([]byte(nodeStructureXML))
+		}
+	}))
+	defer srv.Close()
+
+	src, err := NewClient(srv.URL, "user", "pass").GetSource(context.Background(), "FUGR", "zdemo_fg", nil)
+	var fg FunctionGroup
+	if err != nil || json.Unmarshal([]byte(src), &fg) != nil || len(fg.Functions) != 2 || fg.Functions[0].Name != "ZDEMO_FM_ONE" {
+		t.Fatalf("want the group's JSON with its 2 modules, got %q, %v", src, err)
+	}
+}
+
+func TestFunctionGroupJSONCarriesNoXMLName(t *testing.T) {
+	data, _ := json.Marshal(FunctionGroup{Links: []Link{{Href: "source/main"}}, Functions: []FunctionModule{{Name: "Z_VSP_RUN_REPORT_JOB"}}})
+	if strings.Contains(string(data), "XMLName") {
+		t.Fatalf("XML bookkeeping leaked into the JSON: %s", data)
 	}
 }

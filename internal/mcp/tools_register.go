@@ -170,7 +170,7 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetFunctionGroup") {
 		s.mcpServer.AddTool(mcp.NewTool("GetFunctionGroup",
-			mcp.WithDescription("Retrieve ABAP Function Group source code"),
+			mcp.WithDescription("Function group metadata and its function module list (JSON), not source"),
 			mcp.WithString("function_group",
 				mcp.Required(),
 				mcp.Description("Name of the function group"),
@@ -429,10 +429,10 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetObjectStructure") {
 		s.mcpServer.AddTool(mcp.NewTool("GetObjectStructure",
-			mcp.WithDescription("Get object explorer tree structure. Returns hierarchical view of object components."),
+			mcp.WithDescription("Get a class's component tree: methods, attributes, types, events and implemented interfaces. Classes only; any other object type is refused."),
 			mcp.WithString("object_name",
 				mcp.Required(),
-				mcp.Description("Object name (e.g., ZCL_TEST, ZPROGRAM)"),
+				mcp.Description("Class name (e.g., ZCL_TEST)"),
 			),
 			mcp.WithNumber("max_results",
 				mcp.Description("Maximum number of results (default: 100)"),
@@ -2296,7 +2296,7 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 func (s *Server) registerVersionHistoryTools(shouldRegister func(string) bool) {
 	if shouldRegister("GetRevisions") {
 		s.mcpServer.AddTool(mcp.NewTool("GetRevisions",
-			mcp.WithDescription("List version history (revisions) of an ABAP object. Returns versions with dates, authors, and transport requests. Use version URIs with GetRevisionSource or CompareVersions."),
+			mcp.WithDescription("List version history (revisions) of an ABAP object. Returns versions with dates, authors, and transport requests. Version numbers are the ADT feed's, not VRSD VERSNO: \"00000\" is the current active source, VRSD 00000 appears as the highest number, so there is one entry more than VRSD has rows; order by date, not number. Use version URIs with GetRevisionSource or CompareVersions."),
 			mcp.WithString("type",
 				mcp.Required(),
 				mcp.Description("Object type: PROG, CLAS, INTF, FUNC, INCL, DDLS, BDEF, SRVD"),
