@@ -2,6 +2,11 @@ package adt
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +65,46 @@ func TestResolveWriteTransportFor(t *testing.T) {
 	}
 	if c.planTransport(context.Background(), "TR-NAMED", "/sap/bc/adt/programs/programs/zdemo", "") != nil {
 		t.Error("a named request still planned")
+	}
+}
+
+// RWF 8 knock-on: the "already holds this package" preference read the
+// request through GetTransport, which failed on 7.50, and then sent its object
+// names as one comma-joined token that the data preview's 255-character source
+// lines cut in half (#239). Either way the check said no.
+func TestTransportHoldsPackageOn750(t *testing.T) {
+	var objects strings.Builder
+	for i := 0; i < 11; i++ {
+		fmt.Fprintf(&objects, `<tm:abap_object tm:pgmid="R3TR" tm:type="CLAS" tm:name="ZCL_DEMO_OBJECT_NUMBER_%02d"/>`, i)
+	}
+	tree := `<?xml version="1.0" encoding="utf-8"?><tm:root xmlns:tm="http://www.sap.com/cts/adt/tm"><tm:workbench><tm:modifiable>` +
+		`<tm:request tm:number="TR-EXAMPLE-1" tm:owner="TESTUSER" tm:status="D"><tm:task tm:number="TR-EXAMPLE-2" tm:owner="TESTUSER">` +
+		objects.String() + `</tm:task></tm:request></tm:modifiable></tm:workbench></tm:root>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/cts/transportrequests"):
+			_, _ = w.Write([]byte(tree))
+		case strings.Contains(r.URL.Path, "/datapreview/freestyle"):
+			body, _ := io.ReadAll(r.Body)
+			for _, line := range strings.Split(string(body), "\n") {
+				if len(line) > 255 {
+					http.Error(w, "The text literal is longer than 255 characters.", http.StatusBadRequest)
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`<dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview"><dataPreview:columns>` +
+				`<dataPreview:metadata dataPreview:name="N" dataPreview:type="I"/><dataPreview:dataSet><dataPreview:data>4</dataPreview:data>` +
+				`</dataPreview:dataSet></dataPreview:columns></dataPreview:tableData>`))
+		default:
+			w.Header().Set("X-CSRF-Token", "TOKEN")
+		}
+	}))
+	defer srv.Close()
+	cfg := NewConfig(srv.URL, "TESTUSER", "secret")
+	cfg.Safety.AllowTransportableEdits = true
+	c := NewClientWithTransport(cfg, NewTransport(cfg))
+
+	if !c.transportHoldsPackage(context.Background(), "TR-EXAMPLE-1", "ZDEMO") {
+		t.Error("a request holding 11 objects of the package was judged not to hold it")
 	}
 }
