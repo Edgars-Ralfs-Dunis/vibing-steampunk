@@ -281,7 +281,7 @@ func (s *Server) handleListTransports(ctx context.Context, request mcp.CallToolR
 		return newToolResultError(fmt.Sprintf("ListTransports failed: %v", err)), nil
 	}
 
-	rows := adt.FlattenTransports(res.Transports)
+	rows := res.Flat()
 	if len(rows) == 0 {
 		return mcp.NewToolResultText(transportListingHeader(res) + "\n\nNo transport requests found."), nil
 	}

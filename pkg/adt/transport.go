@@ -406,7 +406,7 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 	if err != nil {
 		return nil, err
 	}
-	return FlattenTransports(res.Transports), nil
+	return res.Flat(), nil
 }
 
 // as4userPredicate builds the E070~AS4USER condition for the fallback query,

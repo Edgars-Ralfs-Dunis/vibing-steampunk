@@ -238,6 +238,7 @@ func TestAs4userPredicate(t *testing.T) {
 type ctsServer struct {
 	mu       sync.Mutex
 	listing  string
+	e070     string // E070 rows to answer with; e070Rows when empty
 	queries  []string
 	sqlCalls int
 }
@@ -262,7 +263,7 @@ func (s *ctsServer) start(t *testing.T) *Client {
 			s.sqlCalls++
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(e070Rows))
+			_, _ = w.Write([]byte(firstNonEmpty(s.e070, e070Rows)))
 
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -478,5 +479,27 @@ func TestTransportReadsOpenWithTransportableEdits(t *testing.T) {
 		if err := call(); err == nil || !strings.Contains(err.Error(), "SAP_ENABLE_TRANSPORTS") {
 			t.Errorf("%s: refusal should name the missing flag, got %v", name, err)
 		}
+	}
+}
+
+// F3-05: E070 knows a transport of copies and when a request last changed;
+// the flat listing lost both on the way through the grouped form.
+func TestListTransportsSQLKeepsTypeTAndChangedAt(t *testing.T) {
+	srv := &ctsServer{listing: `<?xml version="1.0"?><tm:root xmlns:tm="http://www.sap.com/cts/adt/tm"/>`, e070: `<?xml version="1.0" encoding="utf-8"?>
+<dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview">
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRKORR"/><dataPreview:dataSet><dataPreview:data>TR-EXAMPLE-7</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRFUNCTION"/><dataPreview:dataSet><dataPreview:data>T</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRSTATUS"/><dataPreview:dataSet><dataPreview:data>D</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="AS4DATE"/><dataPreview:dataSet><dataPreview:data>20260315</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="AS4TIME"/><dataPreview:dataSet><dataPreview:data>171004</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+</dataPreview:tableData>`}
+	client := srv.start(t)
+
+	list, err := client.ListTransports(context.Background(), "TESTUSER")
+	if err != nil {
+		t.Fatalf("ListTransports: %v", err)
+	}
+	if len(list) != 1 || list[0].Type != "T" || list[0].ChangedAt != "20260315171004" || list[0].TargetDesc == "" {
+		t.Errorf("want one T row with changedAt and targetDesc, got %+v", list)
 	}
 }

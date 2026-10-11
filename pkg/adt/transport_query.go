@@ -133,6 +133,17 @@ type TransportQueryResult struct {
 	Query TransportQuery `json:"query"`
 	// Notes explain fallbacks and deviations, for the caller to pass on.
 	Notes []string `json:"notes,omitempty"`
+	// rows are the flat E070 rows the sql source read, which carry what the
+	// grouped form has no field for: type T, the change time.
+	rows []TransportSummary
+}
+
+// Flat returns the listing as flat rows, as ListTransports answers.
+func (r *TransportQueryResult) Flat() []TransportSummary {
+	if r.rows != nil {
+		return r.rows
+	}
+	return FlattenTransports(r.Transports)
 }
 
 // Empty reports whether the listing holds no request at all.
@@ -371,6 +382,7 @@ func (c *Client) transportsViaSQL(ctx context.Context, res *TransportQueryResult
 		return nil, err
 	}
 	res.Transports = summariesToUserTransports(rows)
+	res.rows = rows
 	res.Source = TransportSourceSQL
 	res.ConfigURI = ""
 	return res, nil
