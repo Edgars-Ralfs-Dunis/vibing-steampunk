@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -1563,7 +1564,7 @@ func (c *Client) GetClassInfo(ctx context.Context, className string) (*ClassInfo
 	className = strings.ToUpper(className)
 
 	// Get object structure
-	structure, err := c.GetObjectStructureCAI(ctx, className, 100)
+	structure, err := c.GetObjectStructureCAI(ctx, className, math.MaxInt)
 	if err != nil {
 		return nil, fmt.Errorf("getting class structure: %w", err)
 	}

@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -71,5 +72,34 @@ func TestObjectStructureOfANonClassSaysClassesOnly(t *testing.T) {
 	_, err := NewClient(srv.URL, "user", "pass").GetObjectStructureCAI(context.Background(), "zrp_ngom_tr_append", 100)
 	if err == nil || !strings.Contains(err.Error(), "classes only") || !strings.Contains(err.Error(), "PROG/P") {
 		t.Fatalf("want a classes-only refusal naming PROG/P, got %v", err)
+	}
+}
+
+// The objectstructure answer is the whole class; GetClassInfo must not stop at
+// 100 elements and hand back a method list that looks complete but is not.
+func TestGetClassInfoKeepsEveryComponentPast100(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<abapsource:objectStructureElement xmlns:abapsource="http://www.sap.com/adt/abapsource" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZCL_BIG" adtcore:type="CLAS/OC">`)
+	for i := 0; i < 80; i++ {
+		fmt.Fprintf(&b, `<abapsource:objectStructureElement adtcore:name="A%d" adtcore:type="CLAS/OA"/>`, i)
+	}
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&b, `<abapsource:objectStructureElement adtcore:name="M%d" adtcore:type="CLAS/OM"/>`, i)
+	}
+	b.WriteString(`</abapsource:objectStructureElement>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if strings.HasSuffix(r.URL.Path, "/objectstructure") {
+			w.Write([]byte(b.String()))
+		}
+	}))
+	defer srv.Close()
+
+	info, err := NewClient(srv.URL, "user", "pass").GetClassInfo(context.Background(), "ZCL_BIG")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Attributes) != 80 || len(info.Methods) != 40 {
+		t.Errorf("attributes %d, methods %d: want all 80 and 40 the server sent", len(info.Attributes), len(info.Methods))
 	}
 }
