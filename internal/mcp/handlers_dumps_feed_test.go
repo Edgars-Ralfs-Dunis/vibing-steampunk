@@ -1,0 +1,128 @@
+package mcp
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/oisee/vibing-steampunk/pkg/adt"
+)
+
+// dumpFeed750Server answers the dumps feed with a real 7.50 body (one entry,
+// captured 2026-10-11, names anonymised) and 404s the detail resource, which
+// is what 7.50 does. Free SQL gets one BALHDR row, written on the server's
+// clock at 2026-09-18 22:19:50.
+func dumpFeed750Server(t *testing.T) *Server {
+	t.Helper()
+	feed, err := os.ReadFile("testdata/dumps-feed-750.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "TOKEN")
+		if r.URL.Path == "/sap/bc/adt/runtime/dumps" {
+			w.Header().Set("Content-Type", "application/atom+xml")
+			_, _ = w.Write(feed)
+			return
+		}
+		if r.URL.Path == "/sap/bc/adt/datapreview/freestyle" {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(balhdrRow))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return NewServer(&Config{BaseURL: srv.URL, Username: "TESTUSER", Client: "001", Mode: "expert"})
+}
+
+// 7.50 serves no /runtime/dump/<id>/formatted, so GetDump answered with the
+// feed fields and a note — while the feed entry's own summary already said
+// where the program died.
+func TestGetDumpReadsTheFeedSummaryWhenTheDetailIsMissing(t *testing.T) {
+	s := dumpFeed750Server(t)
+	res, err := s.handleGetDump(t.Context(), newRequest(map[string]any{"dump_id": "latest"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Detail *adt.DumpDetail `json:"detail"`
+		Source string          `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(resultText(res)), &got); err != nil {
+		t.Fatalf("%v: %s", err, resultText(res))
+	}
+	if got.Detail == nil {
+		t.Fatalf("no detail: %s", resultText(res))
+	}
+	d := got.Detail
+	want := adt.DumpDetail{
+		ShortText:   `Conversion of type "STRING" to type "DEEP_STRUCTURE" not supported.`,
+		ErrorType:   "OBJECTS_MOVE_NOT_SUPPORTED",
+		Program:     "ZCL_VSP_RFC_SERVICE===========CP",
+		Include:     "ZCL_VSP_RFC_SERVICE===========CM007",
+		Line:        46,
+		Procedure:   "HANDLE_CALL",
+		MainProgram: "SAPMHTTP",
+	}
+	if d.ShortText != want.ShortText || d.ErrorType != want.ErrorType || d.Program != want.Program ||
+		d.Include != want.Include || d.Line != want.Line || d.Procedure != want.Procedure || d.MainProgram != want.MainProgram {
+		t.Errorf("detail = %+v\nwant     %+v", *d, want)
+	}
+	if got.Source != "feed summary" {
+		t.Errorf("source = %q, want \"feed summary\"", got.Source)
+	}
+}
+
+// The id's stamp is the server's clock (19:13:35 on a CEST system), the feed's
+// <published> is UTC (17:13:35Z). A dump quoted by full id and no longer in the
+// listing was given its local stamp labelled UTC, two hours late.
+func TestADumpOutsideTheListingGetsUTCFromTheID(t *testing.T) {
+	s := dumpFeed750Server(t)
+	id := "/sap/bc/adt/vit/runtime/dumps/20260918221957devsys_A4H_00%20%20TESTUSER%20%20001%20%2033"
+	res, err := s.handleGetDump(t.Context(), newRequest(map[string]any{"dump_id": id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !strings.Contains(text, `"at": "2026-09-18T20:19:57Z"`) {
+		t.Errorf("want at 2026-09-18T20:19:57Z (22:19:57 CEST), got %s", text)
+	}
+}
+
+const balhdrRow = `<?xml version="1.0" encoding="utf-8"?><dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview">` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="LOGNUMBER"/><dataPreview:dataSet><dataPreview:data>00000000000000123456</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALDATE"/><dataPreview:dataSet><dataPreview:data>20260918</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALTIME"/><dataPreview:dataSet><dataPreview:data>221950</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALUSER"/><dataPreview:dataSet><dataPreview:data>TESTUSER</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`</dataPreview:tableData>`
+
+// BALHDR's ALDATE/ALTIME are the server's clock; the dump's time is UTC since
+// b63904e. Compared as they were, the log row 7 s before the dump sat two hours
+// away and explain_dump answered "matches": [].
+func TestExplainDumpOutsideTheListingStillFindsTheLog(t *testing.T) {
+	s := dumpFeed750Server(t)
+	id := "/sap/bc/adt/vit/runtime/dumps/20260918221957devsys_A4H_00%20%20TESTUSER%20%20001%20%2033"
+	res, err := s.handleExplainDump(t.Context(), newRequest(map[string]any{"dump_id": id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !strings.Contains(text, "00000000000000123456") || !strings.Contains(text, "7s before") {
+		t.Errorf("want the BALHDR row 7s before the dump, got %s", text)
+	}
+}
+
+// The schema promised 100 dumps by default; the handler returns defaultDumps.
+func TestListDumpsSchemaStatesTheHandlersDefault(t *testing.T) {
+	tool, ok := serverForMode(t, "expert").mcpServer.ListTools()["ListDumps"]
+	if !ok {
+		t.Fatal("ListDumps is not registered")
+	}
+	prop, _ := tool.Tool.InputSchema.Properties["max_results"].(map[string]any)
+	if desc, _ := prop["description"].(string); !strings.Contains(desc, fmt.Sprintf("default: %d)", defaultDumps)) {
+		t.Errorf("max_results says %q, the handler defaults to %d", desc, defaultDumps)
+	}
+}

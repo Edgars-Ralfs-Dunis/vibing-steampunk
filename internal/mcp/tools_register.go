@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -596,7 +597,7 @@ func (s *Server) registerDiagnosticsTools(shouldRegister func(string) bool) {
 				mcp.Description("Latest date, YYYY-MM-DD or YYYYMMDD (alias: date_to)"),
 			),
 			mcp.WithNumber("max_results",
-				mcp.Description("Maximum number of results (default: 100)"),
+				mcp.Description(fmt.Sprintf("Maximum number of results (default: %d)", defaultDumps)),
 			),
 		), s.handleListDumps)
 	}

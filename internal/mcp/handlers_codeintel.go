@@ -439,6 +439,9 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 			obj := record.Object
 			fmt.Fprintf(&sb, "- %s (%s)\n", obj.Name, obj.Type)
 			fmt.Fprintf(&sb, "  URI: %s\n", obj.URI)
+			if obj.ParentURI != "" {
+				fmt.Fprintf(&sb, "  Parent: %s\n", obj.ParentURI)
+			}
 			if obj.User != "" {
 				fmt.Fprintf(&sb, "  User: %s\n", obj.User)
 			}
@@ -446,9 +449,9 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 				sb.WriteString("  Status: DELETED\n")
 			}
 		}
-		if record.Transport != nil {
-			tr := record.Transport
-			fmt.Fprintf(&sb, "  Transport: %s\n", tr.Name)
+		// 7.50 sends an empty <transport/> for a local object.
+		if record.Transport != nil && record.Transport.Name != "" {
+			fmt.Fprintf(&sb, "  Transport: %s\n", record.Transport.Name)
 		}
 		sb.WriteString("\n")
 	}

@@ -14,8 +14,9 @@ import (
 // are structured rather than prose: the error type and the program that died
 // are Atom categories, the user is the entry author, and the timestamp is the
 // publication date. So listing and grouping need no HTML parsing at all. The
-// escaped markup in the summary is the detail view, and it is the brittle part,
-// so nothing here depends on it.
+// escaped markup in the summary is the detail view, and it is the brittle part:
+// it is kept on the Dump and read only where nothing better exists
+// (DumpDetailFromSummary, on a release with no detail resource).
 
 // Dump is one runtime error.
 type Dump struct {
@@ -27,6 +28,8 @@ type Dump struct {
 	// class that died.
 	Program string `json:"program,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Summary is the entry's HTML summary, kept for DumpDetailFromSummary.
+	Summary string `json:"-"`
 }
 
 // DumpFilter narrows a dump search.
@@ -88,7 +91,12 @@ func (f DumpFilter) matches(d Dump) bool {
 	eq := func(want, got string) bool {
 		return want == "" || strings.EqualFold(strings.TrimSpace(want), got)
 	}
-	return eq(f.ErrorType, d.ErrorType) && eq(f.Program, d.Program) && eq(f.User, d.User)
+	// A class dies as its pool, ZCL_X=====CP; the class name names it too.
+	program := eq(f.Program, d.Program)
+	if i := strings.Index(d.Program, "="); !program && i > 0 {
+		program = eq(f.Program, d.Program[:i])
+	}
+	return eq(f.ErrorType, d.ErrorType) && program && eq(f.User, d.User)
 }
 
 // parseDumpFeed reads the Atom feed. The categories are what matter: SAP labels
@@ -100,6 +108,7 @@ func parseDumpFeed(body []byte) ([]Dump, error) {
 		Entries []struct {
 			ID        string `xml:"id"`
 			Title     string `xml:"title"`
+			Summary   string `xml:"summary"`
 			Published string `xml:"published"`
 			Author    struct {
 				Name string `xml:"name"`
@@ -120,6 +129,7 @@ func parseDumpFeed(body []byte) ([]Dump, error) {
 			ID:      strings.TrimSpace(e.ID),
 			User:    strings.ToUpper(strings.TrimSpace(e.Author.Name)),
 			Message: strings.TrimSpace(e.Title),
+			Summary: e.Summary,
 		}
 		if at, err := time.Parse(time.RFC3339, strings.TrimSpace(e.Published)); err == nil {
 			d.At = at
@@ -224,12 +234,28 @@ func DumpTimeFromID(id string) time.Time {
 			return time.Time{}
 		}
 	}
-	// The feed reports these in UTC and DumpsFrom parses them as UTC, so the
-	// recovered value has to agree or a correlation window would be shifted by
-	// the server's offset.
+	// The stamp is the server's clock, not UTC: the feed's <published> for the
+	// same dump is UTC and differs by the server's offset (2 h on a CEST
+	// system). The reading comes back as is; DumpClockOffset converts it.
 	at, err := time.Parse("20060102150405", stamp)
 	if err != nil {
 		return time.Time{}
 	}
 	return at.UTC()
+}
+
+// DumpClockOffset is how far the server's clock runs ahead of UTC, read off
+// listed dumps: each id starts with the server-local stamp, each <published>
+// is UTC. False when no listed dump shows both.
+//
+// ponytail: one offset for every date, so a dump from the other side of a
+// summer-time change comes out an hour off; the system zone (TTZCU) and its
+// rules are the upgrade.
+func DumpClockOffset(dumps []Dump) (time.Duration, bool) {
+	for _, d := range dumps {
+		if local := DumpTimeFromID(d.ID); !local.IsZero() && !d.At.IsZero() {
+			return local.Sub(d.At), true
+		}
+	}
+	return 0, false
 }

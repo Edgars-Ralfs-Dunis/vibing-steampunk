@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -351,7 +352,9 @@ var (
 	// rows. So the chapter is joined into one string before any of this is
 	// matched — a line-by-line regex silently finds nothing on exactly the
 	// dumps where the include name is long, which is to say on class pools.
-	terminationLine = regexp.MustCompile(`termination point is in line (\d+) of include "([^"]*)"`)
+	// The feed summary (7.50) says "of program or include", the formatted
+	// dump "of include".
+	terminationLine = regexp.MustCompile(`termination point is in line (\d+) of (?:program or )?include "([^"]*)"`)
 	// "occurred in ABAP program" is written "occurred inABAP program" on some
 	// dumps — SAP's wrapper drops the space when the break falls there, and it
 	// survives into the text. Requiring the space silently loses the procedure
@@ -361,7 +364,11 @@ var (
 )
 
 func parseDumpTermination(formatted string) dumpTermination {
-	text := joinDumpChapter(formatted, dumpTerminationChapter)
+	return parseTerminationText(joinDumpChapter(formatted, dumpTerminationChapter))
+}
+
+// parseTerminationText reads the termination point out of one line of prose.
+func parseTerminationText(text string) dumpTermination {
 	if text == "" {
 		return dumpTermination{}
 	}
@@ -385,6 +392,38 @@ func parseDumpTermination(formatted string) dumpTermination {
 		where.mainProgram = strings.TrimSpace(m[1])
 	}
 	return where
+}
+
+var (
+	summaryHeaderRow = regexp.MustCompile(`<b>([^<]*)</b></td><td>([^<]*)</td>`)
+	htmlTag          = regexp.MustCompile(`<[^>]*>`)
+)
+
+// DumpDetailFromSummary reads what a feed entry's HTML summary says about the
+// dump: the header table (short text, runtime error, program) and the
+// termination point. It is the fallback for a release that serves no detail
+// resource (7.50), where the summary is all there is. Nil when it says none
+// of that.
+func DumpDetailFromSummary(summary string) *DumpDetail {
+	header := map[string]string{}
+	for _, m := range summaryHeaderRow.FindAllStringSubmatch(summary, -1) {
+		header[strings.TrimSpace(html.UnescapeString(m[1]))] = strings.TrimSpace(html.UnescapeString(m[2]))
+	}
+	text := strings.Join(strings.Fields(html.UnescapeString(htmlTag.ReplaceAllString(summary, " "))), " ")
+	where := parseTerminationText(text)
+	detail := &DumpDetail{
+		ShortText:   header["Short Text"],
+		ErrorType:   header["Runtime Error"],
+		Program:     header["Program"],
+		Include:     where.include,
+		Line:        where.line,
+		Procedure:   where.procedure,
+		MainProgram: where.mainProgram,
+	}
+	if detail.ShortText == "" && detail.ErrorType == "" && detail.Program == "" && detail.Include == "" {
+		return nil
+	}
+	return detail
 }
 
 // joinDumpChapter returns one chapter's body as a single line.
