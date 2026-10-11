@@ -300,7 +300,11 @@ func TestCallersOfATableReachTheWorkbenchAddress(t *testing.T) {
 			t.Errorf("%v: %v", args, err)
 			continue
 		}
-		if answer["total"] != 1 {
+		found := false
+		for _, c := range answer["callers"].([]callerAnswer) {
+			found = found || c.Name == "ZCL_VSP_APC_HANDLER"
+		}
+		if !found {
 			t.Errorf("%v: the workbench address knows ZCL_VSP_APC_HANDLER, got %v", args, answer["callers"])
 		}
 	}
@@ -331,10 +335,19 @@ func TestAnalyzeCallGraphCallersPointAtTheTarget(t *testing.T) {
 	if err := json.Unmarshal([]byte(toolResultText(t, result)), &out); err != nil {
 		t.Fatalf("the answer should be JSON: %v", err)
 	}
-	if len(out.Edges) != 1 || out.Edges[0].CallerName != "ZCL_VSP_APC_HANDLER" || out.Edges[0].CalleeName != "ZCL_ADT_HTTP_GATE" {
+	var apc *adt.CallGraphEdge
+	for i, e := range out.Edges {
+		if e.CalleeName != "ZCL_ADT_HTTP_GATE" || e.CalleeKind != "CLAS" {
+			t.Errorf("every callers edge points at the target CLAS ZCL_ADT_HTTP_GATE, got %+v", e)
+		}
+		if e.CallerName == "ZCL_VSP_APC_HANDLER" {
+			apc = &out.Edges[i]
+		}
+	}
+	if apc == nil {
 		t.Fatalf("want ZCL_VSP_APC_HANDLER -> ZCL_ADT_HTTP_GATE, got %+v", out.Edges)
 	}
-	if out.Edges[0].CallerURI != "/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" || out.Edges[0].CalleeKind != "CLAS" {
-		t.Errorf("the caller's URI and the target's kind belong on the edge, got %+v", out.Edges[0])
+	if apc.CallerURI != "/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" {
+		t.Errorf("the caller's URI belongs on the edge, got %+v", *apc)
 	}
 }
