@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -407,5 +408,49 @@ func TestListTransportsNamedUserStillFilters(t *testing.T) {
 	}
 	if q := srv.lastQuery(); !strings.Contains(q, "AS4USER = 'TESTUSER'") {
 		t.Errorf("expected an AS4USER equality for a named user:\n%s", q)
+	}
+}
+
+// RWF 8: 7.50 answers GET /cts/transportrequests/<N> with the user's whole
+// organizer tree (captured on a 7.50 system), so the request sits at
+// tm:root/workbench/modifiable/request, next to the user's other requests.
+func TestGetTransportFindsTheRequestInA750Tree(t *testing.T) {
+	body, err := os.ReadFile("testdata/gettransport-750.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := (&ctsServer{listing: string(body)}).start(t)
+
+	got, err := client.GetTransport(context.Background(), "dvdk9adspp")
+	if err != nil {
+		t.Fatalf("GetTransport: %v", err)
+	}
+	if got.Number != "DVDK9ADSPP" || got.Owner != "DEVU" || got.Description != "Example development request" {
+		t.Errorf("picked the wrong request: %+v", got.TransportSummary)
+	}
+	if got.Type != "K" || got.Status != "D" {
+		t.Errorf("type/status = %q/%q, want K/D", got.Type, got.Status)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].Number != "DVDK9ADSPQ" || len(got.Tasks[0].Objects) != 2 {
+		t.Fatalf("expected task DVDK9ADSPQ with 2 objects, got %+v", got.Tasks)
+	}
+	if o := got.Tasks[0].Objects[0]; o.PgmID != "R3TR" || o.Type != "SUSC" || o.Name != "ZADT" {
+		t.Errorf("first task object = %+v", o)
+	}
+
+	// The other request in the same body carries objects on the request itself.
+	other, err := client.GetTransport(context.Background(), "DVDK9ABQUJ")
+	if err != nil {
+		t.Fatalf("GetTransport DVDK9ABQUJ: %v", err)
+	}
+	if len(other.Objects) != 2 || len(other.Tasks) != 1 || other.Tasks[0].Number != "DVDK9ABQUK" {
+		t.Errorf("DVDK9ABQUJ: %d objects, tasks %+v", len(other.Objects), other.Tasks)
+	}
+
+	// A request the tree does not hold names what came back instead.
+	_, err = client.GetTransport(context.Background(), "DVDK9XXXXX")
+	if err == nil || !strings.Contains(err.Error(), "DVDK9XXXXX") || !strings.Contains(err.Error(), "<root>") ||
+		!strings.Contains(err.Error(), `tm:root xmlns:adtcore`) {
+		t.Errorf("miss error should name the number, the root element and the body start, got %v", err)
 	}
 }

@@ -622,10 +622,10 @@ func (c *Client) GetTransport(ctx context.Context, number string) (*TransportDet
 		return nil, fmt.Errorf("getting transport %s: %w", number, err)
 	}
 
-	return parseTransportDetail(resp.Body)
+	return parseTransportDetail(resp.Body, strings.ToUpper(number))
 }
 
-func parseTransportDetail(data []byte) (*TransportDetails, error) {
+func parseTransportDetail(data []byte, number string) (*TransportDetails, error) {
 	// Strip namespace prefixes
 	xmlStr := string(data)
 	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
@@ -676,7 +676,7 @@ func parseTransportDetail(data []byte) (*TransportDetails, error) {
 	}
 
 	if resp.Request == nil {
-		return nil, fmt.Errorf("transport not found in response")
+		return transportDetailFromTree(data, number)
 	}
 
 	req := resp.Request
@@ -744,6 +744,73 @@ func parseTransportDetail(data []byte) (*TransportDetails, error) {
 	}
 
 	return t, nil
+}
+
+// transportDetailFromTree picks the request out of a document that holds
+// several: 7.50 answers GET /cts/transportrequests/<N> with the user's whole
+// organizer tree (workbench > modifiable > request), not with the one request.
+func transportDetailFromTree(data []byte, number string) (*TransportDetails, error) {
+	requests, err := parseCTSRequests(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range requests {
+		if !strings.EqualFold(r.Number, number) {
+			continue
+		}
+		r.fillFromStructure()
+		t := &TransportDetails{
+			TransportSummary: TransportSummary{
+				Number:      r.Number,
+				Owner:       r.Owner,
+				Description: r.Desc,
+				Type:        r.Type,
+				Status:      r.Status,
+				StatusText:  r.StatusText,
+				Target:      r.Target,
+				TargetDesc:  r.TargetDesc,
+				ChangedAt:   r.LastChanged,
+				Client:      r.Client,
+				Bucket:      r.Bucket,
+				Project:     r.Project,
+			},
+			Objects: ctsObjectsV2(r.Objects),
+		}
+		for _, task := range r.Tasks {
+			t.Tasks = append(t.Tasks, TransportTaskV2{
+				Number:      task.Number,
+				Parent:      task.Parent,
+				Owner:       task.Owner,
+				Description: task.Desc,
+				Type:        task.Type,
+				Status:      task.Status,
+				StatusText:  task.StatusText,
+				Objects:     ctsObjectsV2(task.Objects),
+			})
+		}
+		return t, nil
+	}
+
+	var root ctsNode
+	_ = xml.Unmarshal(data, &root)
+	head := data
+	if len(head) > 300 {
+		head = head[:300]
+	}
+	return nil, fmt.Errorf("transport %s not found in the response: root element <%s> holds %d other requests "+
+		"(7.50 answers with the logon user's organizer tree, which lacks other users' requests and ones released "+
+		"over 14 days ago; E070/E071 have them); body starts: %s",
+		number, root.XMLName.Local, len(requests), head)
+}
+
+func ctsObjectsV2(objects []ctsObject) []TransportObjectV2 {
+	var out []TransportObjectV2
+	for _, o := range objects {
+		pos := 0
+		fmt.Sscanf(o.Position, "%d", &pos)
+		out = append(out, TransportObjectV2{PgmID: o.PgmID, Type: o.Type, Name: o.Name, WBType: o.WBType, Info: o.Info, Position: pos})
+	}
+	return out
 }
 
 // CreateTransportV2 creates a new transport request with options
