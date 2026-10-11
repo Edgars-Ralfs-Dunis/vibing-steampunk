@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -390,6 +392,12 @@ func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallTool
 		return newToolResultError(fmt.Sprintf("GetTextElements failed: %v", err)), nil
 	}
 
+	return mcp.NewToolResultText(formatTextElements(result)), nil
+}
+
+// formatTextElements prints the texts in key order: both are Go maps, whose
+// iteration order changes from call to call.
+func formatTextElements(result *adt.TextElements) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Text Elements for %s (Language: %s)\n\n", result.Program, result.Language)
 
@@ -397,8 +405,8 @@ func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallTool
 	if len(result.SelectionTexts) == 0 {
 		sb.WriteString("  (none)\n")
 	} else {
-		for key, text := range result.SelectionTexts {
-			fmt.Fprintf(&sb, "  %s: %s\n", key, text)
+		for _, key := range slices.Sorted(maps.Keys(result.SelectionTexts)) {
+			fmt.Fprintf(&sb, "  %s: %s\n", key, result.SelectionTexts[key])
 		}
 	}
 	sb.WriteString("\n")
@@ -407,12 +415,12 @@ func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallTool
 	if len(result.TextSymbols) == 0 {
 		sb.WriteString("  (none)\n")
 	} else {
-		for key, text := range result.TextSymbols {
-			fmt.Fprintf(&sb, "  TEXT-%s: %s\n", key, text)
+		for _, key := range slices.Sorted(maps.Keys(result.TextSymbols)) {
+			fmt.Fprintf(&sb, "  TEXT-%s: %s\n", key, result.TextSymbols[key])
 		}
 	}
 
-	return mcp.NewToolResultText(sb.String()), nil
+	return sb.String()
 }
 
 func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
