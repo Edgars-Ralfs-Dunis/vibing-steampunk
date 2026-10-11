@@ -74,6 +74,21 @@ func TestRunReportAcceptsSelectOptionRow(t *testing.T) {
 	}
 }
 
+// The deployed bridge takes the program from the first "report": in the
+// message, and params is marshalled before report, so a selection field
+// named report used to pick the program that ran. Names go out upper case,
+// as the bridge reads them anyway.
+func TestRunReportParamNamedReportDoesNotPickTheProgram(t *testing.T) {
+	s, got := fakeReportBridge(t, finishedJob)
+	if res, text := runReport(t, s, `{"report":"ZOTHER","variant":"V"}`); res.IsError {
+		t.Fatal(text)
+	}
+	sent := (<-got).Params["params"].(map[string]any)
+	if sent["REPORT"] != "ZOTHER" || sent["VARIANT"] != "V" || len(sent) != 2 {
+		t.Errorf("the bridge received params %v, want REPORT and VARIANT", sent)
+	}
+}
+
 // A real range, or a value longer than RSPARAMS-LOW (CHAR45), must be refused
 // before anything is scheduled: the deployed bridge drops ranges silently and
 // truncates long values, and the report would run anyway. So must anything
@@ -94,6 +109,7 @@ func TestRunReportRefusesWhatTheBridgeCannotCarry(t *testing.T) {
 		"braces":    `{"P_X":"a}{b"}`,
 		"long name": `{"P_TOOLONGX":"A"}`,
 		"name":      `{"A\":\"B":"x"}`,
+		"dup name":  `{"p_x":"a","P_X":"b"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, got := fakeReportBridge(t, finishedJob)

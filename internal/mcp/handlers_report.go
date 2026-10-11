@@ -206,7 +206,13 @@ func reportParams(raw any) (map[string]string, error) {
 		if utf8.RuneCountInString(low) > 45 {
 			return nil, fmt.Errorf("params %s: value is %d characters, a selection-screen value holds at most 45 (RSPARAMS-LOW) and SAP would cut it", name, utf8.RuneCountInString(low))
 		}
-		out[name] = low
+		// The bridge upper-cases names anyway; sending them so keeps a field
+		// named report or variant from being read as the program or variant.
+		sel := strings.ToUpper(name)
+		if _, dup := out[sel]; dup {
+			return nil, fmt.Errorf("params %s: given twice; selection-screen names are not case-sensitive", sel)
+		}
+		out[sel] = low
 	}
 	return out, nil
 }
