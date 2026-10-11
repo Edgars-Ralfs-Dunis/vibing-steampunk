@@ -448,7 +448,7 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 				mcp.Description("ADT URI of the object (e.g., /sap/bc/adt/oo/classes/zcl_test). Or give object_type and object_name."),
 			),
 			mcp.WithString("object_type",
-				mcp.Description("CLAS, INTF, PROG, FUGR or FUNC — with object_name, instead of object_uri"),
+				mcp.Description("CLAS, INTF, PROG, FUGR, FUNC, TABL, STRU or VIEW — with object_name, instead of object_uri"),
 			),
 			mcp.WithString("object_name",
 				mcp.Description("Object name, e.g. ZCL_ORDER_PROCESSING"),
