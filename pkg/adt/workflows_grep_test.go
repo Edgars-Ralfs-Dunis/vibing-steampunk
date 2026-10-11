@@ -80,8 +80,42 @@ func TestGrepObjectsNamesTheObjectItCouldNotRead(t *testing.T) {
 }
 
 // F1-02: a package that does not exist was reported as searched with no matches.
+// 7.50 has no package resource: GET /sap/bc/adt/packages/<NAME> answers 404
+// "No suitable resource found" whether the package exists or not (ZED,
+// 2026-10-11), so existence comes from the quick search. Both bodies below
+// are the shapes ZED answered.
+const (
+	searchURL      = "/sap/bc/adt/repository/informationsystem/search"
+	noSearchResult = `<?xml version="1.0" encoding="utf-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`
+)
+
+func searchHitPackage(name string) string {
+	return `<?xml version="1.0" encoding="utf-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">` +
+		`<adtcore:objectReference adtcore:uri="/sap/bc/adt/vit/wb/object_type/devck/object_name/` + name +
+		`" adtcore:type="DEVC/K" adtcore:name="` + name + `"/></adtcore:objectReferences>`
+}
+
+func TestGrepPackageOnAnEmptyPackageThat750CannotAddress(t *testing.T) {
+	srv := grepServer(t, map[string]string{
+		"/sap/bc/adt/repository/nodestructure": emptyNodeStructure,
+		searchURL:                              searchHitPackage("ZEMPTY"),
+	}, nil) // /sap/bc/adt/packages/ZEMPTY answers 404, as on 7.50
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepPackage(context.Background(), "ZEMPTY", ".", false, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success || res.Partial {
+		t.Fatalf("an existing empty package was searched completely, got %+v", res)
+	}
+}
+
 func TestGrepPackageSaysAMissingPackageDoesNotExist(t *testing.T) {
-	srv := grepServer(t, map[string]string{"/sap/bc/adt/repository/nodestructure": emptyNodeStructure}, nil)
+	srv := grepServer(t, map[string]string{
+		"/sap/bc/adt/repository/nodestructure": emptyNodeStructure,
+		searchURL:                              noSearchResult,
+	}, nil)
 	client := NewClient(srv.URL, "user", "pass")
 
 	res, err := client.GrepPackage(context.Background(), "ZZZ_NO_SUCH_PKG", ".", false, nil, 0)

@@ -1063,11 +1063,17 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 // Unlike GetPackage, which reads the nodestructure API and cannot distinguish
 // "package does not exist" from "package exists but has no children" (both
 // return an empty tree), this is a definitive existence check.
+//
+// 7.50 has no package resource: the probe answers 404 "No suitable resource
+// found" for packages that exist too (ZED, 2026-10-11, ZADT_VSP and
+// ZFIX_DATA). A 404 is therefore settled by the quick search, which on 7.50
+// returns the DEVC/K reference for an existing package and nothing otherwise.
 func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, error) {
 	if packageName == "" {
 		return false, fmt.Errorf("empty package name")
 	}
-	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(strings.ToUpper(packageName)))
+	name := strings.ToUpper(packageName)
+	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(name))
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "application/*",
@@ -1076,10 +1082,19 @@ func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, e
 		return true, nil
 	}
 	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-		return false, nil
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false, err
 	}
-	return false, err
+	hits, err := c.SearchObjectByType(ctx, name, "DEVC/K", 10)
+	if err != nil {
+		return false, fmt.Errorf("checking package %s by search: %w", name, err)
+	}
+	for _, h := range hits {
+		if strings.EqualFold(h.Name, name) && strings.HasPrefix(h.Type, "DEVC") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GetPackage retrieves the contents of a package using the nodestructure API.

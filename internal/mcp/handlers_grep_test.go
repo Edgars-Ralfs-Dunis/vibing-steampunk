@@ -46,6 +46,9 @@ func TestGetPackageSaysAMissingPackageDoesNotExist(t *testing.T) {
 			w.Write([]byte(`<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><TREE_CONTENT/></DATA></asx:values></asx:abap>`))
 		case "/sap/bc/adt/packages/ZEMPTY":
 			w.Write([]byte(`<pak:package/>`))
+		case "/sap/bc/adt/repository/informationsystem/search":
+			// 7.50: /packages/<name> 404s for every package, the quick search decides.
+			w.Write([]byte(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
