@@ -428,10 +428,10 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetObjectStructure") {
 		s.mcpServer.AddTool(mcp.NewTool("GetObjectStructure",
-			mcp.WithDescription("Get object explorer tree structure. Returns hierarchical view of object components."),
+			mcp.WithDescription("Get a class's component tree: methods, attributes, types, events and implemented interfaces. Classes only; any other object type is refused."),
 			mcp.WithString("object_name",
 				mcp.Required(),
-				mcp.Description("Object name (e.g., ZCL_TEST, ZPROGRAM)"),
+				mcp.Description("Class name (e.g., ZCL_TEST)"),
 			),
 			mcp.WithNumber("max_results",
 				mcp.Description("Maximum number of results (default: 100)"),

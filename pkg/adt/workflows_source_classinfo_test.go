@@ -51,3 +51,25 @@ func TestGetClassInfoReadsA750ClassStructure(t *testing.T) {
 		t.Errorf("isAbstract %v, isFinal %v, superclass %q: want an abstract subclass of ZCL_BASE", info.IsAbstract, info.IsFinal, info.Superclass)
 	}
 }
+
+// ZED 7.50, 2026-10-11: /oo/classes/{name}/objectstructure answers a program with
+// 400 "Class/Interface ... does not exist" and an interface with 500 "Class
+// implementation part not found" — both read as the object being broken or absent.
+func TestObjectStructureOfANonClassSaysClassesOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/objectstructure"):
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`<exc:exception xmlns:exc="http://www.sap.com/abapxml/types/communicationframework"><type id="ExceptionResourceMessageInvalid"/><localizedMessage lang="EN">Class/Interface ZRP_NGOM_TR_APPEND does not exist</localizedMessage></exc:exception>`))
+		case strings.HasSuffix(r.URL.Path, "/informationsystem/search"):
+			w.Write([]byte(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="/sap/bc/adt/programs/programs/zrp_ngom_tr_append" adtcore:type="PROG/P" adtcore:name="ZRP_NGOM_TR_APPEND" adtcore:packageName="Z_NEXTGENOM"/></adtcore:objectReferences>`))
+		}
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, "user", "pass").GetObjectStructureCAI(context.Background(), "zrp_ngom_tr_append", 100)
+	if err == nil || !strings.Contains(err.Error(), "classes only") || !strings.Contains(err.Error(), "PROG/P") {
+		t.Fatalf("want a classes-only refusal naming PROG/P, got %v", err)
+	}
+}

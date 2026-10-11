@@ -2017,6 +2017,15 @@ func (c *Client) GetObjectStructureCAI(ctx context.Context, objectName string, m
 	}
 	structure, err := c.GetClassObjectStructure(ctx, objectName)
 	if err != nil {
+		// The resource is the class one: a program answers "does not exist" and an
+		// interface a 500 "Class implementation part not found". Say what it is.
+		if hits, serr := c.SearchObject(ctx, strings.ToUpper(objectName), 10); serr == nil {
+			for _, h := range hits {
+				if strings.EqualFold(h.Name, objectName) && !strings.HasPrefix(h.Type, "CLAS") {
+					return nil, fmt.Errorf("object structure is read for classes only; %s is %s, not a class", h.Name, h.Type)
+				}
+			}
+		}
 		return nil, err
 	}
 	if structure == nil {
