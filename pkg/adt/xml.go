@@ -24,7 +24,7 @@ type ObjectReference struct {
 
 // Link represents a hyperlink in ADT responses.
 type Link struct {
-	XMLName xml.Name `xml:"link"`
+	XMLName xml.Name `xml:"link" json:"-"`
 	Href    string   `xml:"href,attr"`
 	Rel     string   `xml:"rel,attr"`
 	Type    string   `xml:"type,attr,omitempty"`
@@ -131,7 +131,7 @@ type PackageObject struct {
 // FunctionGroup represents a function group structure.
 // Root element is <group:abapFunctionGroup> in ADT v2/v3 responses (local name "abapFunctionGroup").
 type FunctionGroup struct {
-	XMLName   xml.Name         `xml:"abapFunctionGroup"`
+	XMLName   xml.Name         `xml:"abapFunctionGroup" json:"-"`
 	URI       string           `xml:"uri,attr"`
 	Type      string           `xml:"type,attr"`
 	Name      string           `xml:"name,attr"`
@@ -142,7 +142,7 @@ type FunctionGroup struct {
 
 // FunctionModule represents a function module.
 type FunctionModule struct {
-	XMLName xml.Name `xml:"functionModule"`
+	XMLName xml.Name `xml:"functionModule" json:"-"`
 	URI     string   `xml:"uri,attr"`
 	Type    string   `xml:"type,attr"`
 	Name    string   `xml:"name,attr"`

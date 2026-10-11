@@ -1095,8 +1095,8 @@ func analyzeTRBoundariesCLI(ctx context.Context, client *adt.Client, trList []st
 		var source string
 		var err error
 		if obj.objType == "FUGR" {
-			// GetSource for FUGR returns JSON metadata (function module list), which has
-			// no ABAP statements and yields zero dependencies. For accurate graph analysis
+			// GetSource for FUGR returns only the SAPL frame (INCLUDE statements), which
+			// yields next to no dependencies. For accurate graph analysis
 			// we need the actual source: TOP include + all fmodules + all sub-includes.
 			var missed []adt.Unsearched
 			source, missed, err = client.GetFunctionGroupAllSources(ctx, obj.objName)

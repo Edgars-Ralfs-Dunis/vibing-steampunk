@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,5 +90,25 @@ func TestAFullyReadFunctionGroupReportsNoGaps(t *testing.T) {
 	}
 	if !strings.Contains(source, "fmodules") || !strings.Contains(source, "includes") {
 		t.Fatalf("the concatenation should span includes and modules:\n%s", source)
+	}
+}
+
+// GetSource FUGR promised source and returned the group's metadata marshalled to
+// JSON, XMLName fields and all (ZED, 2026-10-11). The group's own source is the
+// SAPL frame at /functions/groups/{name}/source/main.
+func TestGetSourceOfAFunctionGroupIsItsSource(t *testing.T) {
+	srv := fugrServer(t, nil)
+	defer srv.Close()
+
+	src, err := NewClient(srv.URL, "user", "pass").GetSource(context.Background(), "FUGR", "zvsp_demo", nil)
+	if err != nil || src != "* source of /sap/bc/adt/functions/groups/ZVSP_DEMO/source/main\n" {
+		t.Fatalf("got %q, %v", src, err)
+	}
+}
+
+func TestFunctionGroupJSONCarriesNoXMLName(t *testing.T) {
+	data, _ := json.Marshal(FunctionGroup{Links: []Link{{Href: "source/main"}}, Functions: []FunctionModule{{Name: "Z_VSP_RUN_REPORT_JOB"}}})
+	if strings.Contains(string(data), "XMLName") {
+		t.Fatalf("XML bookkeeping leaked into the JSON: %s", data)
 	}
 }

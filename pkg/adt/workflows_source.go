@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -82,17 +83,16 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		return c.GetFunction(ctx, name, group)
 
 	case "FUGR":
-		// GetFunctionGroup returns JSON metadata (function module list), not source
-		fg, err := c.GetFunctionGroup(ctx, name)
+		// The group's own source is the SAPL frame (INCLUDE L<name>TOP ...);
+		// its module list is GetFunctionGroup's.
+		resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(name)), &RequestOptions{
+			Method: http.MethodGet,
+			Accept: "text/plain",
+		})
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("getting function group source: %w", err)
 		}
-		// Serialize to JSON for display
-		data, err := json.Marshal(fg)
-		if err != nil {
-			return "", fmt.Errorf("failed to serialize function group: %w", err)
-		}
-		return string(data), nil
+		return string(resp.Body), nil
 
 	case "INCL":
 		return c.GetInclude(ctx, name)
