@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -180,11 +181,42 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 
 // --- Update Source Operations ---
 
+var fugrMainSourceURL = regexp.MustCompile(`(?i)^/sap/bc/adt/functions/groups/([^/?]+)/source/main$`)
+
+// checkFunctionGroupMain refuses a function group main program (SAPL<group>)
+// that lacks INCLUDE L<group>TOP or L<group>UXX. Written over SAPL<group> it
+// replaces the group's include list, so every function module drops out, and
+// it still activates (RWF 31: a .fugr.abap holding only FUNCTION-POOL).
+func checkFunctionGroupMain(sourceURL, source string) error {
+	m := fugrMainSourceURL.FindStringSubmatch(sourceURL)
+	if m == nil {
+		return nil
+	}
+	group, err := url.PathUnescape(m[1])
+	if err != nil {
+		group = m[1]
+	}
+	ns, group := "", strings.ToUpper(group)
+	if i := strings.LastIndex(group, "/"); i > 0 {
+		ns, group = group[:i+1], group[i+1:]
+	}
+	for _, include := range []string{ns + "L" + group + "TOP", ns + "L" + group + "UXX"} {
+		if !regexp.MustCompile(`(?im)^\s*INCLUDE\s+` + regexp.QuoteMeta(include) + `\s*\.`).MatchString(source) {
+			return fmt.Errorf("refusing to write the main program of function group %s%s without INCLUDE %s: it would replace the group's include list and cut off its function modules (the main program holds the INCLUDEs; FUNCTION-POOL belongs in the TOP include)", ns, group, include)
+		}
+	}
+	return nil
+}
+
 // UpdateSource writes source code to an ABAP object.
 // objectSourceURL is the source URL (e.g., "/sap/bc/adt/programs/programs/ZTEST/source/main")
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, source string, lockHandle string, transport string) error {
+	if err := checkFunctionGroupMain(objectSourceURL, source); err != nil {
+		return err
+	}
+
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpUpdate,
