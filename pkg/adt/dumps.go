@@ -229,12 +229,28 @@ func DumpTimeFromID(id string) time.Time {
 			return time.Time{}
 		}
 	}
-	// The feed reports these in UTC and DumpsFrom parses them as UTC, so the
-	// recovered value has to agree or a correlation window would be shifted by
-	// the server's offset.
+	// The stamp is the server's clock, not UTC: the feed's <published> for the
+	// same dump is UTC and differs by the server's offset (2 h on a CEST
+	// system). The reading comes back as is; DumpClockOffset converts it.
 	at, err := time.Parse("20060102150405", stamp)
 	if err != nil {
 		return time.Time{}
 	}
 	return at.UTC()
+}
+
+// DumpClockOffset is how far the server's clock runs ahead of UTC, read off
+// listed dumps: each id starts with the server-local stamp, each <published>
+// is UTC. False when no listed dump shows both.
+//
+// ponytail: one offset for every date, so a dump from the other side of a
+// summer-time change comes out an hour off; the system zone (TTZCU) and its
+// rules are the upgrade.
+func DumpClockOffset(dumps []Dump) (time.Duration, bool) {
+	for _, d := range dumps {
+		if local := DumpTimeFromID(d.ID); !local.IsZero() && !d.At.IsZero() {
+			return local.Sub(d.At), true
+		}
+	}
+	return 0, false
 }

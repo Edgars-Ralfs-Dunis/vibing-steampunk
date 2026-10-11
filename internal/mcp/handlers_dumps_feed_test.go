@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -67,5 +68,20 @@ func TestGetDumpReadsTheFeedSummaryWhenTheDetailIsMissing(t *testing.T) {
 	}
 	if got.Source != "feed summary" {
 		t.Errorf("source = %q, want \"feed summary\"", got.Source)
+	}
+}
+
+// The id's stamp is the server's clock (19:13:35 on a CEST system), the feed's
+// <published> is UTC (17:13:35Z). A dump quoted by full id and no longer in the
+// listing was given its local stamp labelled UTC, two hours late.
+func TestADumpOutsideTheListingGetsUTCFromTheID(t *testing.T) {
+	s := dumpFeed750Server(t)
+	id := "/sap/bc/adt/vit/runtime/dumps/20260918221957devsys_A4H_00%20%20TESTUSER%20%20001%20%2033"
+	res, err := s.handleGetDump(t.Context(), newRequest(map[string]any{"dump_id": id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !strings.Contains(text, `"at": "2026-09-18T20:19:57Z"`) {
+		t.Errorf("want at 2026-09-18T20:19:57Z (22:19:57 CEST), got %s", text)
 	}
 }

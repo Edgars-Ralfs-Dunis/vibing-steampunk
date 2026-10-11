@@ -422,13 +422,24 @@ func (s *Server) resolveDump(ctx context.Context, args map[string]any) (adt.Dump
 	// and no error type, and explain_dump failed outright with "this dump
 	// carries no timestamp" — of a dump whose timestamp is the first fourteen
 	// characters of the id it was handed.
+	//
+	// The id's stamp is the server's clock, so it is converted with the offset
+	// the listing shows; labelled UTC unconverted it was two hours late on a
+	// CEST system.
 	dump := adt.Dump{ID: which, At: adt.DumpTimeFromID(which)}
-	if dump.At.IsZero() {
+	offset, known := adt.DumpClockOffset(dumps)
+	switch {
+	case dump.At.IsZero():
 		notes = append(notes, "this id carries no timestamp and the dump is not in the current listing, "+
 			"so anything that needs a time — correlation, similarity by recency — cannot run on it")
-	} else {
+	case known:
+		dump.At = dump.At.Add(-offset)
 		notes = append(notes, "this dump is not in the current listing; its time was read from the id, "+
 			"and the program and error type are unknown, which narrows what can be correlated")
+	default:
+		notes = append(notes, "this dump is not in the current listing; its time was read from the id, which is the "+
+			"server's clock, and no listed dump showed that clock's offset from UTC, so the time may be off by it; "+
+			"the program and error type are unknown, which narrows what can be correlated")
 	}
 	return dump, notes, nil
 }
