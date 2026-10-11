@@ -87,3 +87,23 @@ func TestUI5GetApp_FillsDescriptionFromCatalogue(t *testing.T) {
 		t.Errorf("got %+v", d)
 	}
 }
+
+// 7.50 answers 404 to an OPTIONS on the bare /filestore/ui5-bsp root while the
+// objects collection the UI5 tools use serves the catalogue.
+func TestProbeUI5_AvailableWhenObjectsCollectionAnswers(t *testing.T) {
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	mock := &funcMockClient{doFunc: func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && req.URL.Path == "/sap/bc/adt/filestore/ui5-bsp/objects" {
+			return newTestResponse(ui5CatalogueFeed), nil
+		}
+		if strings.Contains(req.URL.Path, "discovery") {
+			return newTestResponse("OK"), nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+	}}
+	p := NewFeatureProber(NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock)), FeatureConfig{}, false)
+	ok, msg, err := p.probeUI5(context.Background())
+	if err != nil || !ok {
+		t.Errorf("probeUI5 = %v, %q, %v; want available", ok, msg, err)
+	}
+}
