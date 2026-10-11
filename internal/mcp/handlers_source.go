@@ -399,6 +399,10 @@ func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
+	if !result.Success {
+		// Nothing could be searched: that is a failure, not "no matches".
+		return newToolResultError(string(output)), nil
+	}
 	return mcp.NewToolResultText(string(output)), nil
 }
 
@@ -455,5 +459,9 @@ func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolReq
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
+	if !result.Success {
+		// Nothing could be searched: that is a failure, not "no matches".
+		return newToolResultError(string(output)), nil
+	}
 	return mcp.NewToolResultText(string(output)), nil
 }

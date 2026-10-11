@@ -1397,7 +1397,10 @@ func (s *Server) fetchConfigRefs(ctx context.Context, variable string, doGrep bo
 					// object we read and did not find the name in. A failed
 					// grep must not borrow that meaning.
 					gaps = append(gaps, adt.Unsearched{Object: c.objType + " " + c.objName, Reason: err.Error()})
-				case grepResult != nil && len(grepResult.Matches) > 0:
+				case !grepResult.Success:
+					// GrepObject reports a failed read in its result, not as an error.
+					gaps = append(gaps, adt.Unsearched{Object: c.objType + " " + c.objName, Reason: grepResult.Message})
+				case len(grepResult.Matches) > 0:
 					confirmed = true
 				}
 			}

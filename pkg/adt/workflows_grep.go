@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -39,6 +40,8 @@ type GrepPackageResult struct {
 	// "no matches found in 50 objects" is said about a search that reached
 	// thirty.
 	Unsearched []Unsearched `json:"unsearched,omitempty"`
+	// Partial is true when the answer does not cover everything asked for.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // GrepObject searches for a regex pattern in a single ABAP object's source code.
@@ -142,6 +145,8 @@ type GrepObjectsResult struct {
 	// Unsearched names what this sweep could not look at. Without it, a
 	// message counting every input describes a search that did not reach them.
 	Unsearched []Unsearched `json:"unsearched,omitempty"`
+	// Partial is true when the answer does not cover everything asked for.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // GrepObjects searches for a regex pattern in multiple ABAP objects' source code.
@@ -165,8 +170,13 @@ func (c *Client) GrepObjects(ctx context.Context, objectURLs []string, pattern s
 	}
 
 	// Search each object
+	searched := 0
 	for _, objectURL := range objectURLs {
 		objResult, err := c.GrepObject(ctx, objectURL, pattern, caseInsensitive, contextLines)
+		if err == nil && !objResult.Success {
+			// GrepObject reports a failed read in its result, not as an error.
+			err = errors.New(objResult.Message)
+		}
 		if err != nil {
 			// Carrying on is right — one unreadable object should not lose the
 			// other forty-nine — but it has to be recorded, or the count below
@@ -174,6 +184,7 @@ func (c *Client) GrepObjects(ctx context.Context, objectURLs []string, pattern s
 			result.Unsearched = append(result.Unsearched, Unsearched{Object: objectURL, Reason: err.Error()})
 			continue
 		}
+		searched++
 
 		// Only include objects with matches
 		if objResult.MatchCount > 0 {
@@ -182,8 +193,8 @@ func (c *Client) GrepObjects(ctx context.Context, objectURLs []string, pattern s
 		}
 	}
 
-	result.Success = true
-	searched := len(objectURLs) - len(result.Unsearched)
+	result.Success = searched > 0
+	result.Partial = len(result.Unsearched) > 0
 	if result.TotalMatches == 0 {
 		result.Message = fmt.Sprintf("No matches found in %d object(s)", searched)
 	} else {
@@ -212,11 +223,26 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 		Objects:     []GrepObjectResult{},
 	}
 
+	fail := func(reason string) (*GrepPackageResult, error) {
+		result.Message = reason
+		result.Unsearched = []Unsearched{{Object: packageName, Reason: reason}}
+		result.Partial = true
+		return result, nil
+	}
+
 	// Get package contents
 	packageContent, err := c.GetPackage(ctx, packageName)
 	if err != nil {
-		result.Message = fmt.Sprintf("Failed to read package: %v", err)
-		return result, nil
+		return fail(fmt.Sprintf("Failed to read package: %v", err))
+	}
+	// SAP answers a package that does not exist with the same empty tree as
+	// an empty one; only a direct probe tells them apart.
+	if len(packageContent.Objects) == 0 && len(packageContent.SubPackages) == 0 {
+		if exists, err := c.PackageExists(ctx, packageName); err != nil {
+			return fail(fmt.Sprintf("Package %s returned no objects, and whether it exists could not be checked: %v", packageName, err))
+		} else if !exists {
+			return fail(fmt.Sprintf("Package %s does not exist", packageName))
+		}
 	}
 
 	// Build object type filter map
@@ -229,6 +255,7 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 
 	// Search each object in package
 	objectsSearched := 0
+	attempted, searched := 0, 0
 	for _, obj := range packageContent.Objects {
 		// Apply object type filter
 		if len(typeFilter) > 0 && !typeFilter[obj.Type] {
@@ -241,10 +268,16 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 		}
 
 		// Grep this object
+		attempted++
 		objResult, err := c.GrepObject(ctx, obj.URI, pattern, caseInsensitive, 0)
-		if err != nil {
-			continue // Skip objects that fail
+		if err == nil && !objResult.Success {
+			err = errors.New(objResult.Message)
 		}
+		if err != nil {
+			result.Unsearched = append(result.Unsearched, Unsearched{Object: obj.URI, Reason: err.Error()})
+			continue
+		}
+		searched++
 
 		// Only include objects with matches
 		if objResult.MatchCount > 0 {
@@ -260,12 +293,16 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 		}
 	}
 
-	result.Success = true
+	result.Success = searched > 0 || attempted == 0
+	result.Partial = len(result.Unsearched) > 0
 	if result.TotalMatches == 0 {
 		result.Message = "No matches found in package"
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) across %d object(s) in package %s",
 			result.TotalMatches, len(result.Objects), packageName)
+	}
+	if note := UnsearchedNote(result.Unsearched, searched+len(result.Unsearched), "object"); note != "" {
+		result.Message += "\n" + note
 	}
 
 	return result, nil
@@ -281,6 +318,8 @@ type GrepPackagesResult struct {
 	// Unsearched names what this sweep could not look at. Without it, a
 	// message counting every input describes a search that did not reach them.
 	Unsearched []Unsearched `json:"unsearched,omitempty"`
+	// Partial is true when the answer does not cover everything asked for.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // GrepPackages searches for a regex pattern across multiple ABAP packages.
@@ -326,14 +365,18 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 	result.Packages = packagesToSearch
 
 	// Search each package
-	totalObjectsSearched := 0
+	totalObjectsSearched, searchedPackages := 0, 0
 	for _, packageName := range packagesToSearch {
 		pkgResult, err := c.GrepPackage(ctx, packageName, pattern, caseInsensitive, objectTypes, maxResults-totalObjectsSearched)
+		if err == nil && !pkgResult.Success {
+			err = errors.New(pkgResult.Message)
+		}
 		if err != nil {
 			result.Unsearched = append(result.Unsearched, Unsearched{Object: packageName, Reason: err.Error()})
 			continue
 		}
 
+		searchedPackages++
 		// A package that was searched only partly passes its own gaps up:
 		// they are the caller's gaps too.
 		result.Unsearched = append(result.Unsearched, pkgResult.Unsearched...)
@@ -347,12 +390,16 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 		}
 	}
 
-	result.Success = true
+	result.Success = searchedPackages > 0
+	result.Partial = len(result.Unsearched) > 0
 	if result.TotalMatches == 0 {
-		result.Message = fmt.Sprintf("No matches found in %d package(s)", len(result.Packages)-len(result.Unsearched))
+		result.Message = fmt.Sprintf("No matches found in %d package(s)", searchedPackages)
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) across %d object(s) in %d package(s)",
-			result.TotalMatches, len(result.Objects), len(result.Packages))
+			result.TotalMatches, len(result.Objects), searchedPackages)
+	}
+	if note := UnsearchedNote(result.Unsearched, searchedPackages+len(result.Unsearched), "item"); note != "" {
+		result.Message += "\n" + note
 	}
 
 	return result, nil
