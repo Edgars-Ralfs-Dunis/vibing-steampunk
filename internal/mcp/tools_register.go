@@ -1229,7 +1229,7 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 	// Transport-related tools
 	if shouldRegister("GetUserTransports") {
 		s.mcpServer.AddTool(mcp.NewTool("GetUserTransports", append([]mcp.ToolOption{
-			mcp.WithDescription("Get the transport requests of a user from the transport organizer (requires --enable-transports): workbench and customizing, modifiable and released, with tasks and objects, grouped by target and CTS project. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus (the organizer returns only released requests without them), falls back to the saved search configuration and then to E070/E07T."),
+			mcp.WithDescription("Get the transport requests of a user from the transport organizer (requires --enable-transports or --allow-transportable-edits): workbench and customizing, modifiable and released, with tasks and objects, grouped by target and CTS project. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus (the organizer returns only released requests without them), falls back to the saved search configuration and then to E070/E07T."),
 			mcp.WithString("user_name",
 				mcp.Description("SAP user name (uppercased); default: the connection user. '*' for every user (source sql only)"),
 			),
@@ -1239,7 +1239,7 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetTransportInfo") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTransportInfo",
-			mcp.WithDescription("Get transport information for an ABAP object (requires --enable-transports flag). Returns available transports and lock status."),
+			mcp.WithDescription("Get transport information for an ABAP object (requires --enable-transports or --allow-transportable-edits). Returns available transports and lock status."),
 			mcp.WithString("object_url",
 				mcp.Required(),
 				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),

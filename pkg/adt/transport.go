@@ -175,8 +175,8 @@ func parseUserTransports(data []byte) (*UserTransports, error) {
 // GetTransportInfo retrieves transport information for an object.
 // Returns available transports and whether the object is locked.
 func (c *Client) GetTransportInfo(ctx context.Context, objectURL string, devClass string) (*TransportInfo, error) {
-	// Safety check
-	if err := c.checkSafety(OpTransport, "GetTransportInfo"); err != nil {
+	// A read: allowed whenever transportable edits are, as for ListTransports.
+	if err := c.config.Safety.CheckTransport("", "GetTransportInfo", false); err != nil {
 		return nil, err
 	}
 

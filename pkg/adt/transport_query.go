@@ -218,9 +218,10 @@ func (q TransportQuery) Describe() string {
 }
 
 // QueryUserTransports lists transport requests the way GetUserTransports
-// does, with the query spelled out. It needs transport management enabled.
+// does, with the query spelled out. Reading is allowed whenever transportable
+// edits are, as for ListTransports.
 func (c *Client) QueryUserTransports(ctx context.Context, q TransportQuery) (*TransportQueryResult, error) {
-	if err := c.checkSafety(OpTransport, "GetUserTransports"); err != nil {
+	if err := c.config.Safety.CheckTransport("", "GetUserTransports", false); err != nil {
 		return nil, err
 	}
 	return c.queryTransports(ctx, q)

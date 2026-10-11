@@ -454,3 +454,29 @@ func TestGetTransportFindsTheRequestInA750Tree(t *testing.T) {
 		t.Errorf("miss error should name the number, the root element and the body start, got %v", err)
 	}
 }
+
+// RWF 17: GetUserTransports and GetTransportInfo only read, so they open on
+// the same flag ListTransports and GetTransport do; a refusal names the flag.
+func TestTransportReadsOpenWithTransportableEdits(t *testing.T) {
+	client := (&ctsServer{listing: treeWithoutTargets}).start(t)
+	client.config.Safety = SafetyConfig{AllowTransportableEdits: true}
+	ctx := context.Background()
+
+	if _, err := client.GetUserTransports(ctx, "TESTUSER"); err != nil {
+		t.Errorf("GetUserTransports refused under --allow-transportable-edits: %v", err)
+	}
+	if _, err := client.GetTransportInfo(ctx, "/sap/bc/adt/programs/programs/zdemo", "ZDEMO"); err != nil && strings.Contains(err.Error(), "blocked") {
+		t.Errorf("GetTransportInfo refused under --allow-transportable-edits: %v", err)
+	}
+
+	client.config.Safety = SafetyConfig{}
+	for name, call := range map[string]func() error{
+		"GetUserTransports": func() error { _, err := client.GetUserTransports(ctx, "TESTUSER"); return err },
+		"GetTransportInfo":  func() error { _, err := client.GetTransportInfo(ctx, "/x", "ZDEMO"); return err },
+		"CreateTransport":   func() error { _, err := client.CreateTransport(ctx, "/x", "d", "ZDEMO"); return err },
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "SAP_ENABLE_TRANSPORTS") {
+			t.Errorf("%s: refusal should name the missing flag, got %v", name, err)
+		}
+	}
+}
