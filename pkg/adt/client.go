@@ -1210,6 +1210,9 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 	if maxRows <= 0 {
 		maxRows = 100
 	}
+	// Above about 100,000 the ddic preview silently answers ~100 rows; the
+	// probe row below still says when the clamp cut the answer.
+	maxRows = min(maxRows, UnlimitedRows)
 
 	params := url.Values{}
 	// One row more than wanted tells a capped answer from a complete one.

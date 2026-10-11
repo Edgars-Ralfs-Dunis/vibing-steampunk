@@ -90,6 +90,18 @@ func TestHandleGetTableContentsRowLimit(t *testing.T) {
 			args:    map[string]any{"table_name": "TADIR", "max_rows": float64(500), "offset": float64(900)},
 			wantRow: "1400",
 		},
+		{
+			// Above about 100,000 ddic silently answers ~100 rows (night
+			// 2026-10-11 F2-03), so a larger request is clamped.
+			name:    "max_rows above the ddic cutoff is clamped",
+			args:    map[string]any{"table_name": "T000", "max_rows": float64(150000)},
+			wantRow: fmt.Sprintf("%d", adt.UnlimitedRows),
+		},
+		{
+			name:    "max_rows plus offset above the ddic cutoff is clamped",
+			args:    map[string]any{"table_name": "T000", "max_rows": float64(500), "offset": float64(100000)},
+			wantRow: fmt.Sprintf("%d", adt.UnlimitedRows),
+		},
 	}
 
 	for _, tt := range tests {
