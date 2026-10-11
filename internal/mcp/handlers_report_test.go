@@ -76,13 +76,24 @@ func TestRunReportAcceptsSelectOptionRow(t *testing.T) {
 
 // A real range, or a value longer than RSPARAMS-LOW (CHAR45), must be refused
 // before anything is scheduled: the deployed bridge drops ranges silently and
-// truncates long values, and the report would run anyway.
+// truncates long values, and the report would run anyway. So must anything
+// its regex and brace counting read wrongly: JSON escapes (" \ & < > and
+// control characters arrive as escape text), braces inside a string (the
+// params object ends early and its rows are dropped), and a name longer than
+// RSPARAMS-SELNAME (CHAR8).
 func TestRunReportRefusesWhatTheBridgeCannotCarry(t *testing.T) {
 	for name, params := range map[string]string{
-		"between":  `{"S_X":{"SIGN":"I","OPTION":"BT","LOW":"A","HIGH":"B"}}`,
-		"exclude":  `{"S_X":{"SIGN":"E","LOW":"A"}}`,
-		"two rows": `{"S_X":["A","B"]}`,
-		"too long": `{"P_X":"` + strings.Repeat("x", 46) + `"}`,
+		"between":   `{"S_X":{"SIGN":"I","OPTION":"BT","LOW":"A","HIGH":"B"}}`,
+		"exclude":   `{"S_X":{"SIGN":"E","LOW":"A"}}`,
+		"two rows":  `{"S_X":["A","B"]}`,
+		"too long":  `{"P_X":"` + strings.Repeat("x", 46) + `"}`,
+		"quote":     `{"P_X":"a\"b"}`,
+		"backslash": `{"P_X":"a\\b"}`,
+		"ampersand": `{"P_X":"R&D"}`,
+		"newline":   `{"P_X":"a\nb"}`,
+		"braces":    `{"P_X":"a}{b"}`,
+		"long name": `{"P_TOOLONGX":"A"}`,
+		"name":      `{"A\":\"B":"x"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, got := fakeReportBridge(t, finishedJob)

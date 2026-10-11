@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -192,6 +193,15 @@ func reportParams(raw any) (map[string]string, error) {
 			return nil, fmt.Errorf("params %s: only a single I/EQ value can be passed until the ZADT_VSP report service is redeployed; the deployed bridge keeps one row per select-option and would drop the rest", name)
 		default:
 			return nil, fmt.Errorf("params %s: a value must be a string, a {SIGN,OPTION,LOW,HIGH} row or an array of rows", name)
+		}
+		if utf8.RuneCountInString(name) > 8 {
+			return nil, fmt.Errorf("params %s: a selection-screen name has at most 8 characters (RSPARAMS-SELNAME) and SAP would cut it", name)
+		}
+		// The deployed bridge reads params with a regex and counts braces without
+		// skipping strings: JSON escapes arrive as escape text and a brace ends
+		// the object early, so the report would run with a changed or dropped row.
+		if strings.ContainsAny(name+low, "\"\\<>&{}\u2028\u2029") || strings.IndexFunc(name+low, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf("params %s: the deployed ZADT_VSP bridge would change a name or value holding \" \\ < > & { } or a control character; use a variant until the report service is redeployed", name)
 		}
 		if utf8.RuneCountInString(low) > 45 {
 			return nil, fmt.Errorf("params %s: value is %d characters, a selection-screen value holds at most 45 (RSPARAMS-LOW) and SAP would cut it", name, utf8.RuneCountInString(low))
