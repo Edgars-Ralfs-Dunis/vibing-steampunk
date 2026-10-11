@@ -1189,6 +1189,8 @@ func (c *Client) GetStructure(ctx context.Context, structName string) (string, e
 type TableContentsResult struct {
 	Columns []TableColumn
 	Rows    []map[string]interface{}
+	// Truncated says SAP had more rows than were asked for.
+	Truncated bool `json:"-"`
 }
 
 // TableColumn represents a column in table contents.
@@ -1210,7 +1212,8 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 	}
 
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	// One row more than wanted tells a capped answer from a complete one.
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 	params.Set("ddicEntityName", tableName)
 
 	opts := &RequestOptions{
@@ -1230,7 +1233,7 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 		return nil, fmt.Errorf("getting table contents: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // RunQuery executes a freestyle SQL query against the SAP database.
@@ -1249,7 +1252,7 @@ func (c *Client) RunQuery(ctx context.Context, sqlQuery string, maxRows int) (*T
 	}
 
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/datapreview/freestyle", &RequestOptions{
 		Method:      http.MethodPost,
@@ -1262,7 +1265,7 @@ func (c *Client) RunQuery(ctx context.Context, sqlQuery string, maxRows int) (*T
 		return nil, fmt.Errorf("running query: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // wrapSQL keeps every line of a statement under the data preview's limit.
@@ -1310,8 +1313,9 @@ func wrapSQL(query string) string {
 	return out.String()
 }
 
-// parseTableContents parses the XML response for table contents.
-func parseTableContents(data []byte) (*TableContentsResult, error) {
+// parseTableContents parses the XML response for table contents, keeping at
+// most limit rows. 7.50's ddic preview returns one row more than rowNumber.
+func parseTableContents(data []byte, limit int) (*TableContentsResult, error) {
 	// The ADT table data response is complex XML
 	// We'll parse it into a generic structure
 	type tableData struct {
@@ -1363,6 +1367,9 @@ func parseTableContents(data []byte) (*TableContentsResult, error) {
 			}
 		}
 		result.Rows = append(result.Rows, row)
+	}
+	if len(result.Rows) > limit {
+		result.Rows, result.Truncated = result.Rows[:limit], true
 	}
 
 	return result, nil

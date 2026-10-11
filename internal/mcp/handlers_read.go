@@ -308,19 +308,15 @@ func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToo
 			contents.Rows = nil
 		} else {
 			contents.Rows = contents.Rows[offset:]
-			if len(contents.Rows) > maxRows {
-				contents.Rows = contents.Rows[:maxRows]
-			}
 		}
 	}
 
 	// Strip rows for columns_only
 	if columnsOnly && contents != nil {
-		contents.Rows = nil
+		contents.Rows, contents.Truncated = nil, false
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return tableContentsResult(contents), nil
 }
 
 func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -349,8 +345,21 @@ func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest
 		return newToolResultError(fmt.Sprintf("Failed to run query: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return tableContentsResult(contents), nil
+}
+
+// tableContentsResult is a data preview answer, plus the sentence saying so
+// when SAP had more rows than it shows.
+func tableContentsResult(contents *adt.TableContentsResult) *mcp.CallToolResult {
+	var out any = contents
+	if contents != nil && contents.Truncated {
+		out = struct {
+			*adt.TableContentsResult
+			Truncated string `json:"truncated"`
+		}{contents, truncationNoteUnknownTotal(len(contents.Rows), "max_rows", "narrow the WHERE clause, or count with COUNT( * )")}
+	}
+	result, _ := json.MarshalIndent(out, "", "  ")
+	return mcp.NewToolResultText(string(result))
 }
 
 func (s *Server) handleGetCDSDependencies(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

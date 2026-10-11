@@ -1,11 +1,16 @@
 package mcp
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
@@ -27,6 +32,13 @@ func rowNumberCaptureServer(t *testing.T) (*httptest.Server, *string) {
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?><dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview"></dataPreview:tableData>`))
 	}))
 	return srv, &got
+}
+
+// probe is the rowNumber sent for want rows: one more, so that an answer
+// that fills it is known to be capped.
+func probe(want string) string {
+	n, _ := strconv.Atoi(want)
+	return strconv.Itoa(n + 1)
 }
 
 // A real MCP client's max_rows: 0 (and, it turned out, max_rows: -1 too)
@@ -90,8 +102,8 @@ func TestHandleGetTableContentsRowLimit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if *gotRowNumber != tt.wantRow {
-				t.Errorf("rowNumber sent to ADT = %q, want %q\nresult text: %s", *gotRowNumber, tt.wantRow, resultText(result))
+			if *gotRowNumber != probe(tt.wantRow) {
+				t.Errorf("rowNumber sent to ADT = %q, want %q\nresult text: %s", *gotRowNumber, probe(tt.wantRow), resultText(result))
 			}
 		})
 	}
@@ -129,8 +141,8 @@ func TestHandleRunQueryRowLimit(t *testing.T) {
 			if _, err := s.handleRunQuery(t.Context(), newRequest(tt.args)); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if *gotRowNumber != tt.wantRow {
-				t.Errorf("rowNumber sent to ADT = %q, want %q", *gotRowNumber, tt.wantRow)
+			if *gotRowNumber != probe(tt.wantRow) {
+				t.Errorf("rowNumber sent to ADT = %q, want %q", *gotRowNumber, probe(tt.wantRow))
 			}
 		})
 	}
@@ -199,8 +211,75 @@ func TestRouteReadActionForwardsAllRows(t *testing.T) {
 			if _, err := s.handleUniversalTool(t.Context(), newRequest(tt.args)); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if *gotRowNumber != tt.wantRow {
-				t.Errorf("rowNumber sent to ADT = %q, want %q", *gotRowNumber, tt.wantRow)
+			if *gotRowNumber != probe(tt.wantRow) {
+				t.Errorf("rowNumber sent to ADT = %q, want %q", *gotRowNumber, probe(tt.wantRow))
+			}
+		})
+	}
+}
+
+// rowsServer plays the data preview over a table of total rows numbered 001,
+// 002, .... Freestyle returns the rowNumber it was asked for; 7.50's ddic
+// returns one row more (night 2026-10-11 F2-02).
+func rowsServer(t *testing.T, total int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "AbCdEfGhIjKlMnOpQrStUv==")
+		n, _ := strconv.Atoi(r.URL.Query().Get("rowNumber"))
+		if strings.Contains(r.URL.Path, "/ddic") {
+			n++
+		}
+		var data strings.Builder
+		for i := 1; i <= min(n, total); i++ {
+			fmt.Fprintf(&data, "<data>%03d</data>", i)
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprintf(w, `<tableData><columns><metadata name="N"/><dataSet>%s</dataSet></columns></tableData>`, data.String())
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A capped answer must say so, and a page must hold max_rows rows, not one
+// more that the next page repeats (night 2026-10-11 F2-04, F2-02).
+func TestQueryAnswersSayWhenCapped(t *testing.T) {
+	s := NewServer(&Config{BaseURL: rowsServer(t, 7).URL, Username: "TESTUSER", Client: "001", Mode: "expert"})
+	tests := []struct {
+		name      string
+		handler   func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+		args      map[string]any
+		want      string
+		truncated bool
+	}{
+		{"RunQuery capped", s.handleRunQuery, map[string]any{"sql_query": "SELECT n FROM t", "max_rows": float64(3)}, "001 002 003", true},
+		{"RunQuery complete", s.handleRunQuery, map[string]any{"sql_query": "SELECT n FROM t", "max_rows": float64(10)}, "001 002 003 004 005 006 007", false},
+		{"GetTableContents page 1", s.handleGetTableContents, map[string]any{"table_name": "T", "max_rows": float64(3)}, "001 002 003", true},
+		{"GetTableContents page 2", s.handleGetTableContents, map[string]any{"table_name": "T", "max_rows": float64(3), "offset": float64(3)}, "004 005 006", true},
+		{"GetTableContents last page", s.handleGetTableContents, map[string]any{"table_name": "T", "max_rows": float64(3), "offset": float64(6)}, "007", false},
+		{"GetTableContents complete", s.handleGetTableContents, map[string]any{"table_name": "T", "max_rows": float64(10)}, "001 002 003 004 005 006 007", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.handler(t.Context(), newRequest(tt.args))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Rows      []map[string]string
+				Truncated string `json:"truncated"`
+			}
+			if err := json.Unmarshal([]byte(resultText(result)), &got); err != nil {
+				t.Fatalf("%v\n%s", err, resultText(result))
+			}
+			var rows []string
+			for _, r := range got.Rows {
+				rows = append(rows, r["N"])
+			}
+			if strings.Join(rows, " ") != tt.want {
+				t.Errorf("rows = %v, want %s", rows, tt.want)
+			}
+			if (got.Truncated != "") != tt.truncated {
+				t.Errorf("truncated = %q, want a note: %v", got.Truncated, tt.truncated)
 			}
 		})
 	}
