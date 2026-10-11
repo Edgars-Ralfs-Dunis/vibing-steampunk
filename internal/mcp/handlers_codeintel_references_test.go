@@ -182,6 +182,15 @@ func TestReferencesFiltersByTypeBeforeTheCap(t *testing.T) {
 			t.Errorf("filter %v: total counts what matched, filtered_out what did not; got %v and %v",
 				filter, out["total"], out["filtered_out"])
 		}
+		if out["scaffolding"] != float64(0) {
+			t.Errorf("filter %v: a filtered hit is not scaffolding too, got %v", filter, out["scaffolding"])
+		}
+	}
+
+	out := referencesAnswer(t, srv, map[string]any{
+		"object_url": "/sap/bc/adt/vit/wb/object_type/tabldt/object_name/ZT_DEMO", "object_types": "PROG"})
+	if out["note"] != nil {
+		t.Errorf("a filter that removed every hit must not say nothing uses it: %v", out["note"])
 	}
 }
 

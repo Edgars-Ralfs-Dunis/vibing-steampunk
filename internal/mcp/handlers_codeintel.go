@@ -157,7 +157,7 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 		"object_url":  objectURL,
 		"total":       len(hits),
 		"rows_read":   len(results),
-		"scaffolding": len(results) - len(hits),
+		"scaffolding": len(results) - len(hits) - filteredOut,
 		"source":      "the where-used list behind SE84 (/sap/bc/adt/repository/informationsystem/usageReferences)",
 	}
 	if line > 0 || column > 0 {
@@ -177,7 +177,7 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	} else {
 		answer["references"] = hits
 	}
-	if len(hits) == 0 && len(results) > 0 {
+	if len(hits) == 0 && filteredOut == 0 && len(results) > 0 {
 		// Every row was scaffolding. That is an answer, and it is not the same
 		// as the resource returning nothing.
 		answer["note"] = "the resource answered with containers only — packages and groups, no references. " +
