@@ -2,7 +2,9 @@ package adt
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +50,40 @@ func TestUI5ListApps_FiltersAndCapsClientSide(t *testing.T) {
 	// * must cross the namespace slash.
 	if apps, _, _, _ := newUI5CatalogueClient().UI5ListApps(context.Background(), "*HR_PDF", 10); len(apps) != 1 {
 		t.Errorf("*HR_PDF: got %+v, want /MIBCON/HR_PDF", apps)
+	}
+}
+
+// ui5AppClient answers the catalogue and ZNGOM_CAL's content; any other app's
+// content is a 404, as for an app that does not exist.
+func ui5AppClient() *Client {
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	mock := &funcMockClient{doFunc: func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/sap/bc/adt/filestore/ui5-bsp/objects":
+			return newTestResponse(ui5CatalogueFeed), nil
+		case "/sap/bc/adt/filestore/ui5-bsp/objects/ZNGOM_CAL/content":
+			return newTestResponse(`<atom:feed xmlns:atom="http://www.w3.org/2005/Atom"><atom:entry><atom:id>ZNGOM_CAL/app.js</atom:id><atom:title>ZNGOM_CAL/app.js</atom:title><atom:category term="file"/></atom:entry></atom:feed>`), nil
+		}
+		if strings.Contains(req.URL.Path, "discovery") {
+			return newTestResponse("OK"), nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+	}}
+	return NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+}
+
+func TestUI5GetApp_MissingAppIsAnError(t *testing.T) {
+	if d, err := ui5AppClient().UI5GetApp(context.Background(), "ZZ_NO_SUCH_APP_F7"); err == nil {
+		t.Fatalf("got %+v and no error for an app that does not exist", d)
+	}
+}
+
+func TestUI5GetApp_FillsDescriptionFromCatalogue(t *testing.T) {
+	d, err := ui5AppClient().UI5GetApp(context.Background(), "zngom_cal")
+	if err != nil {
+		t.Fatalf("UI5GetApp: %v", err)
+	}
+	if d.Description != "NextGenOM payroll calendar" || len(d.Files) != 1 {
+		t.Errorf("got %+v", d)
 	}
 }

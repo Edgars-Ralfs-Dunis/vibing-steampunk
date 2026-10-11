@@ -165,11 +165,18 @@ func (c *Client) UI5GetApp(ctx context.Context, appName string) (*UI5AppDetails,
 		Method: http.MethodGet,
 		Accept: "application/atom+xml",
 	})
-	if err == nil {
-		var feed UI5AtomFeed
-		if xml.Unmarshal(contentResp.Body, &feed) == nil {
-			details.Files = extractFilesFromAtomFeed(&feed, appName)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("getting UI5 app %s: %w", appName, err)
+	}
+	var feed UI5AtomFeed
+	if err := xml.Unmarshal(contentResp.Body, &feed); err != nil {
+		return nil, fmt.Errorf("parsing UI5 app %s content: %w", appName, err)
+	}
+	details.Files = extractFilesFromAtomFeed(&feed, appName)
+
+	// The catalogue entry's summary is the app's description.
+	if apps, _, _, err := c.UI5ListApps(ctx, appName, 1); err == nil && len(apps) == 1 {
+		details.Description = apps[0].Description
 	}
 
 	return details, nil
