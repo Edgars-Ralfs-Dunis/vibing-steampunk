@@ -321,7 +321,7 @@ func (s *Server) analyzeTransportBoundaries(ctx context.Context, trList []string
 		var source string
 		var err error
 		if obj.objType == "FUGR" {
-			// FUGR via GetSource returns only the SAPL frame; use the dedicated helper
+			// FUGR via GetSource returns only JSON metadata; use the dedicated helper
 			// that concatenates top include + all fmodules + sub-includes for real deps.
 			var missedSubs []adt.Unsearched
 			source, missedSubs, err = s.adtClient.GetFunctionGroupAllSources(ctx, obj.objName)

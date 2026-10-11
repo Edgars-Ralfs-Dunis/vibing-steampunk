@@ -93,16 +93,25 @@ func TestAFullyReadFunctionGroupReportsNoGaps(t *testing.T) {
 	}
 }
 
-// GetSource FUGR promised source and returned the group's metadata marshalled to
-// JSON, XMLName fields and all (ZED, 2026-10-11). The group's own source is the
-// SAPL frame at /functions/groups/{name}/source/main.
-func TestGetSourceOfAFunctionGroupIsItsSource(t *testing.T) {
-	srv := fugrServer(t, nil)
+// GetSource FUGR answers with the group's metadata and module list as JSON:
+// MCP_USAGE.md and ARCHITECTURE.md document it, and hyperfocused "read FUGR"
+// routes through GetSource, so it is the only way that mode reaches the list.
+func TestGetSourceOfAFunctionGroupIsItsModuleList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		switch r.URL.Path {
+		case "/sap/bc/adt/functions/groups/ZDEMO_FG":
+			w.Write([]byte(`<group:abapFunctionGroup xmlns:group="http://www.sap.com/adt/functions/groups" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZDEMO_FG" adtcore:type="FUGR/F"/>`))
+		case "/sap/bc/adt/repository/nodestructure":
+			w.Write([]byte(nodeStructureXML))
+		}
+	}))
 	defer srv.Close()
 
-	src, err := NewClient(srv.URL, "user", "pass").GetSource(context.Background(), "FUGR", "zvsp_demo", nil)
-	if err != nil || src != "* source of /sap/bc/adt/functions/groups/ZVSP_DEMO/source/main\n" {
-		t.Fatalf("got %q, %v", src, err)
+	src, err := NewClient(srv.URL, "user", "pass").GetSource(context.Background(), "FUGR", "zdemo_fg", nil)
+	var fg FunctionGroup
+	if err != nil || json.Unmarshal([]byte(src), &fg) != nil || len(fg.Functions) != 2 || fg.Functions[0].Name != "ZDEMO_FM_ONE" {
+		t.Fatalf("want the group's JSON with its 2 modules, got %q, %v", src, err)
 	}
 }
 
