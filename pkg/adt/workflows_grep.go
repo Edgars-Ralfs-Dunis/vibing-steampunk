@@ -8,6 +8,9 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // --- Grep/Search Tools ---
@@ -314,9 +317,7 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 	}
 
 	// Search each object in package
-	objectsSearched := 0
-	attempted, searched := 0, 0
-	capped := false
+	var objs []PackageObject
 	for _, obj := range packageContent.Objects {
 		// Apply object type filter
 		if len(typeFilter) > 0 && !typeFilter[obj.Type] {
@@ -327,10 +328,44 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 		if !isSourceObject(obj.Type) {
 			continue
 		}
+		objs = append(objs, obj)
+	}
 
-		// Grep this object
-		attempted++
-		objResult, err := c.GrepObject(ctx, obj.URI, pattern, caseInsensitive, 0)
+	// Read the objects in a bounded pool until the deadline, then collect in
+	// package order so the answer does not depend on timing.
+	// ponytail: a function group fans out 6 more reads of its own, so the
+	// worst case is 8x6 requests at once; share one limiter if SAP feels it.
+	ctx, cancel := context.WithTimeout(ctx, grepPackageDeadline)
+	defer cancel()
+	objResults := make([]*GrepObjectResult, len(objs))
+	errs := make([]error, len(objs))
+	var found atomic.Int32
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for i, obj := range objs {
+		sem <- struct{}{}
+		if ctx.Err() != nil || (maxResults > 0 && int(found.Load()) >= maxResults) {
+			break
+		}
+		wg.Add(1)
+		go func(i int, uri string) {
+			defer func() { <-sem; wg.Done() }()
+			objResults[i], errs[i] = c.GrepObject(ctx, uri, pattern, caseInsensitive, 0)
+			if errs[i] == nil && objResults[i].MatchCount > 0 {
+				found.Add(1)
+			}
+		}(i, obj.URI)
+	}
+	wg.Wait()
+
+	objectsSearched, searched := 0, 0
+	capped := false
+	for i, obj := range objs {
+		objResult, err := objResults[i], errs[i]
+		if objResult == nil && err == nil {
+			// Never started: the deadline (or the caller) stopped the walk.
+			err = fmt.Errorf("not searched: %w", ctx.Err())
+		}
 		if err == nil && !objResult.Success {
 			err = errors.New(objResult.Message)
 		}
@@ -357,7 +392,7 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 		}
 	}
 
-	result.Success = searched > 0 || attempted == 0
+	result.Success = searched > 0 || len(objs) == 0
 	result.Partial = len(result.Unsearched) > 0 || capped
 	if result.TotalMatches == 0 {
 		result.Message = "No matches found in package"
@@ -409,6 +444,8 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 		Objects:  []GrepObjectResult{},
 		Searched: map[string]int{},
 	}
+	ctx, cancel := context.WithTimeout(ctx, grepPackageDeadline)
+	defer cancel()
 
 	if len(packages) == 0 {
 		result.Message = "No packages provided"
@@ -482,6 +519,10 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 
 	return result, nil
 }
+
+// grepPackageDeadline bounds a package grep: past it, the objects not yet read
+// are reported as unsearched instead of the call running on for minutes.
+var grepPackageDeadline = 90 * time.Second
 
 // maxResultsNote says that max_results ended the walk, so the answer is not
 // known to be complete.

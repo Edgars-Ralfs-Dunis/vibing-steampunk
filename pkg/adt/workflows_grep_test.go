@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // grepServer serves sources by path. A path in sources answers 200 with its
@@ -262,5 +264,57 @@ func TestGrepPackageSaysWhenMaxResultsStoppedIt(t *testing.T) {
 	}
 	if len(res.Objects) != 3 || res.Partial || strings.Contains(res.Message, "max_results") {
 		t.Fatalf("want 3 objects and no note, got %+v", res)
+	}
+}
+
+// F1-10: a package grep reads objects in parallel and, at its deadline,
+// returns what it found plus what it did not reach instead of running on.
+func TestGrepPackageIsParallelAndStopsAtItsDeadline(t *testing.T) {
+	var objects [][2]string
+	for _, n := range []string{"za", "zb", "zc", "zd", "ze", "zf", "zg", "zslow"} {
+		objects = append(objects, [2]string{"PROG/P", "/sap/bc/adt/programs/programs/" + n})
+	}
+	var inFlight, peak atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-CSRF-Token", "test-token")
+		if r.URL.Path == "/sap/bc/adt/repository/nodestructure" {
+			w.Write([]byte(nodeStructureWith(objects...)))
+			return
+		}
+		n := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+		}
+		delay := 50 * time.Millisecond
+		if strings.Contains(r.URL.Path, "zslow") {
+			delay = 2 * time.Second
+		}
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+		w.Write([]byte("REPORT x.\r\n"))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, "user", "pass")
+
+	old := grepPackageDeadline
+	grepPackageDeadline = 500 * time.Millisecond
+	defer func() { grepPackageDeadline = old }()
+
+	start := time.Now()
+	res, err := client.GrepPackage(context.Background(), "ZPKG", "REPORT", false, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Fatalf("the deadline did not stop the walk: took %v", took)
+	}
+	if peak.Load() < 2 {
+		t.Fatalf("objects were read one at a time")
+	}
+	if len(res.Objects) != 7 || !res.Partial || len(res.Unsearched) != 1 || !strings.Contains(res.Unsearched[0].Object, "zslow") {
+		t.Fatalf("want 7 matches and zslow unsearched, got %+v", res)
 	}
 }
