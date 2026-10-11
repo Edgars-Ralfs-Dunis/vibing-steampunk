@@ -825,6 +825,9 @@ func (s *Server) registerSearchTools(shouldRegister func(string) bool) {
 			mcp.WithNumber("maxResults",
 				mcp.Description("Maximum number of results to return (default 100)"),
 			),
+			mcp.WithString("objectType",
+				mcp.Description("Only objects of this type (CLAS, PROG, INTF, FUGR, ...)"),
+			),
 		), s.handleSearchObject)
 	}
 }
