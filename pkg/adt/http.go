@@ -499,17 +499,17 @@ func (t *Transport) fetchCSRFTokenFor(ctx context.Context, stateful bool) error 
 // allowReauth exists to break a cycle: re-authenticating ends with a token
 // fetch of its own, and that fetch must not start another re-authentication.
 func (t *Transport) fetchCSRFTokenWithReauth(ctx context.Context, allowReauth bool, stateful bool) error {
-	token, status, redirected, err := t.probeCSRFToken(ctx, http.MethodHead, stateful)
+	token, status, redirected, body, err := t.probeCSRFToken(ctx, http.MethodHead, stateful)
 	if err != nil {
 		return err
 	}
 	if !isCSRFToken(token) {
 		if status == http.StatusUnauthorized && !t.canReauth() {
-			return fmt.Errorf("authentication failed (401): check username/password")
+			return t.logonRefused(status, "check username/password", body)
 		}
 		var getStatus int
 		var getRedirected bool
-		token, getStatus, getRedirected, err = t.probeCSRFToken(ctx, http.MethodGet, stateful)
+		token, getStatus, getRedirected, body, err = t.probeCSRFToken(ctx, http.MethodGet, stateful)
 		if err != nil {
 			return err
 		}
@@ -539,9 +539,9 @@ func (t *Transport) fetchCSRFTokenWithReauth(ctx context.Context, allowReauth bo
 			}
 			switch getStatus {
 			case http.StatusUnauthorized:
-				return fmt.Errorf("authentication failed (401): check username/password")
+				return t.logonRefused(getStatus, "check username/password", body)
 			case http.StatusForbidden:
-				return fmt.Errorf("access forbidden (403): check user authorizations")
+				return t.logonRefused(getStatus, "check user authorizations", body)
 			default:
 				return fmt.Errorf("no CSRF token in response (HEAD %d, GET %d)", status, getStatus)
 			}
@@ -552,17 +552,32 @@ func (t *Transport) fetchCSRFTokenWithReauth(ctx context.Context, allowReauth bo
 	return nil
 }
 
+// logonRefused names the client and host that refused the logon and keeps
+// the start of what SAP said: an access gate's 403 carries its reason as plain
+// text, and with a per-call client the number is otherwise nowhere.
+func (t *Transport) logonRefused(status int, hint, body string) error {
+	host := t.config.BaseURL
+	if u, err := url.Parse(t.config.BaseURL); err == nil && u.Host != "" {
+		host = u.Hostname()
+	}
+	if body != "" {
+		hint = body
+	}
+	return fmt.Errorf("client %s on %s refused the logon (%d): %s", t.config.Client, host, status, hint)
+}
+
 // probeCSRFToken asks /core/discovery for a token with the given method and
-// returns the token (empty when the server did not supply one), the status, and
-// whether the answer came from somewhere other than the SAP host.
-func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful bool) (token string, status int, redirected bool, err error) {
+// returns the token (empty when the server did not supply one), the status,
+// whether the answer came from somewhere other than the SAP host, and the
+// first 300 bytes of the body.
+func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful bool) (token string, status int, redirected bool, body string, err error) {
 	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
 	if err != nil {
-		return "", 0, false, fmt.Errorf("building URL: %w", err)
+		return "", 0, false, "", fmt.Errorf("building URL: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
 	if err != nil {
-		return "", 0, false, fmt.Errorf("creating request: %w", err)
+		return "", 0, false, "", fmt.Errorf("creating request: %w", err)
 	}
 
 	if t.config.HasBasicAuth() {
@@ -593,15 +608,17 @@ func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful 
 	traceHTTPRequest(req, nil)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return "", 0, false, fmt.Errorf("executing request: %w", err)
+		return "", 0, false, "", fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
-	// Drain the body so the connection can be reused.
+	// Keep the start for a refusal's reason, then drain the rest so the
+	// connection can be reused.
+	head, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 	_, _ = io.Copy(io.Discard, resp.Body)
 	traceHTTPResponse(resp, nil)
 	t.adoptServerCookies(resp)
 
-	return resp.Header.Get("X-CSRF-Token"), resp.StatusCode, t.redirectedAwayFromSAP(resp), nil
+	return resp.Header.Get("X-CSRF-Token"), resp.StatusCode, t.redirectedAwayFromSAP(resp), strings.TrimSpace(string(head)), nil
 }
 
 // redirectedAwayFromSAP reports whether a response was ultimately served by

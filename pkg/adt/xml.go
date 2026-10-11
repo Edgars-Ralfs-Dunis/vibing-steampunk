@@ -112,12 +112,13 @@ type ProgramStructure struct {
 
 // PackageContent represents package contents response.
 type PackageContent struct {
-	XMLName     xml.Name        `xml:"package"`
-	URI         string          `xml:"uri,attr"`
-	Type        string          `xml:"type,attr"`
+	XMLName     xml.Name        `xml:"package" json:"-"`
+	URI         string          `xml:"uri,attr" json:"-"`
+	Type        string          `xml:"type,attr" json:"-"`
 	Name        string          `xml:"name,attr"`
 	SubPackages []string        `json:"subPackages,omitempty"`
 	Objects     []PackageObject `json:"objects,omitempty"`
+	Note        string          `json:"note,omitempty"`
 }
 
 // PackageObject represents an object within a package.

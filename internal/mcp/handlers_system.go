@@ -37,6 +37,11 @@ func (s *Server) handleGetSystemInfo(ctx context.Context, request mcp.CallToolRe
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get system info: %v", err)), nil
 	}
+	// CVERS cannot see the database of a Suite on HANA system; take it from
+	// the HANA feature (probed, or forced by the operator) as GetFeatures does.
+	if info.DatabaseSystem == "" && s.featureProber.Probe(ctx, adt.FeatureHANA).Available {
+		info.DatabaseSystem = "HDB"
+	}
 
 	result, _ := json.MarshalIndent(info, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil
@@ -106,12 +111,19 @@ func (s *Server) handleGetAbapHelp(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError(fmt.Sprintf("GetAbapHelp failed: %v", err)), nil
 	}
 
-	// Try to get real documentation from SAP system via WebSocket (ZADT_VSP)
-	// Use ensureWSConnected like GitExport does
+	// Try to get real documentation from SAP system via WebSocket (ZADT_VSP),
+	// and say why when there is none: bridge down and no documentation used to
+	// read the same.
+	noDocs := "the ZADT_VSP bridge could not be reached"
 	if errResult := s.ensureWSConnected(ctx, "GetAbapHelp"); errResult == nil {
 		wsHelp, err := s.amdpWSClient.GetAbapDocumentation(ctx, keyword)
-		if err == nil && wsHelp.Found && wsHelp.HTML != "" {
+		switch {
+		case err != nil:
+			noDocs = fmt.Sprintf("the ZADT_VSP bridge failed: %v", err)
+		case wsHelp.Found && wsHelp.HTML != "":
 			helpResult.Documentation = wsHelp.HTML
+		default:
+			noDocs = "the SAP system returned no documentation for this keyword"
 		}
 	}
 
@@ -124,7 +136,7 @@ func (s *Server) handleGetAbapHelp(ctx context.Context, request mcp.CallToolRequ
 	if helpResult.Documentation != "" {
 		fmt.Fprintf(&sb, "\n---\nDocumentation from SAP system:\n\n%s", helpResult.Documentation)
 	} else {
-		fmt.Fprintf(&sb, "\n---\nNote: For full documentation, use the URL above or WebSearch with the provided query.")
+		fmt.Fprintf(&sb, "\n---\nNote: no documentation from the SAP system (%s). For full documentation, use the URL above or WebSearch with the provided query.", noDocs)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

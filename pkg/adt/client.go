@@ -1501,34 +1501,26 @@ type Transaction struct {
 }
 
 // GetTransaction retrieves information about a transaction.
+// It reads TSTC/TSTCT through the data preview: the vit/wb TRAN URI has no
+// mapping on 7.50 (500 "No URI-Mapping defined", upstream #232). The
+// statements stay short because the ddic preview cuts lines at 255 chars.
 func (c *Client) GetTransaction(ctx context.Context, tcode string) (*Transaction, error) {
-	tcode = strings.ToUpper(tcode)
+	tcode = strings.ToUpper(strings.TrimSpace(tcode))
 
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/TRAN/object_name/%s", tcode), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	res, err := c.GetTableContents(ctx, "TSTC", 1, "SELECT PGMNA FROM TSTC WHERE TCODE = '"+sqlQuote(tcode)+"'")
 	if err != nil {
 		return nil, fmt.Errorf("getting transaction: %w", err)
 	}
-
-	// Parse transaction info
-	type tranInfo struct {
-		Name        string `xml:"name,attr"`
-		Description string `xml:"description,attr"`
-		Program     string `xml:"program,attr"`
+	if len(res.Rows) == 0 {
+		return nil, fmt.Errorf("transaction %s not found (no TSTC row)", tcode)
 	}
+	tran := &Transaction{Name: tcode, Program: getString(res.Rows[0], "PGMNA")}
 
-	var ti tranInfo
-	if err := xml.Unmarshal(resp.Body, &ti); err != nil {
-		return nil, fmt.Errorf("parsing transaction: %w", err)
+	txt, err := c.GetTableContents(ctx, "TSTCT", 1, "SELECT TTEXT FROM TSTCT WHERE SPRSL = '"+sapLanguageKey(c.config.Language)+"' AND TCODE = '"+sqlQuote(tcode)+"'")
+	if err == nil && len(txt.Rows) > 0 {
+		tran.Description = getString(txt.Rows[0], "TTEXT")
 	}
-
-	return &Transaction{
-		Name:        ti.Name,
-		Description: ti.Description,
-		Program:     ti.Program,
-	}, nil
+	return tran, nil
 }
 
 // --- Type Info Operations ---
@@ -1544,35 +1536,17 @@ type TypeInfo struct {
 
 // GetTypeInfo retrieves information about a data type.
 func (c *Client) GetTypeInfo(ctx context.Context, typeName string) (*TypeInfo, error) {
-	typeName = strings.ToUpper(typeName)
-
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", typeName), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	doc, err := c.getDataElement(ctx, typeName, "")
 	if err != nil {
 		return nil, fmt.Errorf("getting type info: %w", err)
 	}
 
-	type typeData struct {
-		Name        string `xml:"name,attr"`
-		Type        string `xml:"type,attr"`
-		Description string `xml:"description,attr"`
-		Length      int    `xml:"length,attr"`
-		Decimals    int    `xml:"decimals,attr"`
-	}
-
-	var td typeData
-	if err := xml.Unmarshal(resp.Body, &td); err != nil {
-		return nil, fmt.Errorf("parsing type info: %w", err)
-	}
-
 	return &TypeInfo{
-		Name:        td.Name,
-		Type:        td.Type,
-		Description: td.Description,
-		Length:      td.Length,
-		Decimals:    td.Decimals,
+		Name:        doc.Name,
+		Type:        doc.DataElement.DataType,
+		Description: doc.Description,
+		Length:      doc.DataElement.Length,
+		Decimals:    doc.DataElement.Decimals,
 	}, nil
 }
 
@@ -1583,6 +1557,7 @@ type SystemInfo struct {
 	SystemID        string `json:"systemId"`
 	Client          string `json:"client"`
 	SAPRelease      string `json:"sapRelease"`
+	SupportPack     string `json:"supportPack,omitempty"` // SAP_BASIS SP level (CVERS EXTRELEASE)
 	KernelRelease   string `json:"kernelRelease,omitempty"`
 	DatabaseRelease string `json:"databaseRelease,omitempty"`
 	DatabaseSystem  string `json:"databaseSystem,omitempty"`
@@ -1626,13 +1601,11 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		row := basisResult.Rows[0]
 		info.SAPRelease = getString(row, "RELEASE")
 		info.ABAPRelease = getString(row, "RELEASE")
+		info.SupportPack = getString(row, "EXTRELEASE")
 	}
 
-	// Try to get kernel info from CVERS (optional)
-	kernelResult, err := c.RunQuery(ctx, "SELECT RELEASE FROM CVERS WHERE COMPONENT = 'SAP_ABA'", 1)
-	if err == nil && len(kernelResult.Rows) > 0 {
-		info.KernelRelease = getString(kernelResult.Rows[0], "RELEASE")
-	}
+	// KernelRelease stays empty: no SQL-readable table holds the kernel
+	// release (SAP_ABA in CVERS is a software component, not the kernel).
 
 	// Try to detect HANA from CVERS (optional)
 	hanaResult, err := c.RunQuery(ctx,
@@ -1674,10 +1647,25 @@ type InstalledComponent struct {
 func (c *Client) GetInstalledComponents(ctx context.Context) ([]InstalledComponent, error) {
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/system/components", &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "application/atom+xml;type=feed, application/xml;q=0.8",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting installed components: %w", err)
+	}
+
+	// 7.50 answers an Atom feed: entry id = component, entry title =
+	// "release;SP package;SP level;description".
+	var feed AtomFeed
+	if xml.Unmarshal(resp.Body, &feed) == nil {
+		result := make([]InstalledComponent, 0, len(feed.Entries))
+		for _, e := range feed.Entries {
+			ic := InstalledComponent{Name: e.ID, Description: e.Title}
+			if f := strings.SplitN(e.Title, ";", 4); len(f) == 4 {
+				ic = InstalledComponent{Name: e.ID, Release: f[0], SupportPack: f[2], Description: f[3]}
+			}
+			result = append(result, ic)
+		}
+		return result, nil
 	}
 
 	type componentXML struct {
