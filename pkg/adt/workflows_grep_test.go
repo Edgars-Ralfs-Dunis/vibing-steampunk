@@ -227,3 +227,40 @@ func TestGrepObjectAnchorsAtEndOfLineInCRLFSource(t *testing.T) {
 		t.Fatalf("want 1 CR-free match, got %+v", res)
 	}
 }
+
+// F1-11: a walk that max_results stopped must say so.
+func TestGrepPackageSaysWhenMaxResultsStoppedIt(t *testing.T) {
+	const a, b, c = "/sap/bc/adt/programs/programs/za", "/sap/bc/adt/programs/programs/zb", "/sap/bc/adt/programs/programs/zc"
+	srv := grepServer(t, map[string]string{
+		"/sap/bc/adt/repository/nodestructure": nodeStructureWith([2]string{"PROG/P", a}, [2]string{"PROG/P", b}, [2]string{"PROG/P", c}),
+		a + "/source/main":                     "REPORT za.\r\n",
+		b + "/source/main":                     "REPORT zb.\r\n",
+		c + "/source/main":                     "REPORT zc.\r\n",
+	}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepPackage(context.Background(), "ZPKG", "REPORT", false, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Objects) != 1 || !res.Partial || !strings.Contains(res.Message, "max_results=1") {
+		t.Fatalf("want 1 object and a max_results note, got %+v", res)
+	}
+
+	all, err := client.GrepPackages(context.Background(), []string{"ZPKG"}, false, "REPORT", false, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Objects) != 1 || !all.Partial || !strings.Contains(all.Message, "max_results=1") {
+		t.Fatalf("want 1 object and a max_results note, got %+v", all)
+	}
+
+	// A walk that finished under the cap is complete and says nothing.
+	res, err = client.GrepPackage(context.Background(), "ZPKG", "REPORT", false, nil, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Objects) != 3 || res.Partial || strings.Contains(res.Message, "max_results") {
+		t.Fatalf("want 3 objects and no note, got %+v", res)
+	}
+}

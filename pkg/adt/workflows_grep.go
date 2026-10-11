@@ -316,6 +316,7 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 	// Search each object in package
 	objectsSearched := 0
 	attempted, searched := 0, 0
+	capped := false
 	for _, obj := range packageContent.Objects {
 		// Apply object type filter
 		if len(typeFilter) > 0 && !typeFilter[obj.Type] {
@@ -350,18 +351,22 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 			// Check max results limit
 			objectsSearched++
 			if maxResults > 0 && objectsSearched >= maxResults {
+				capped = true
 				break
 			}
 		}
 	}
 
 	result.Success = searched > 0 || attempted == 0
-	result.Partial = len(result.Unsearched) > 0
+	result.Partial = len(result.Unsearched) > 0 || capped
 	if result.TotalMatches == 0 {
 		result.Message = "No matches found in package"
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) across %d object(s) in package %s",
 			result.TotalMatches, len(result.Objects), packageName)
+	}
+	if capped {
+		result.Message += maxResultsNote(maxResults)
 	}
 	if note := UnsearchedNote(result.Unsearched, searched+len(result.Unsearched), "object"); note != "" {
 		result.Message += "\n" + note
@@ -431,6 +436,7 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 
 	// Search each package
 	totalObjectsSearched, searchedPackages := 0, 0
+	capped := false
 	for _, packageName := range packagesToSearch {
 		pkgResult, err := c.GrepPackage(ctx, packageName, pattern, caseInsensitive, objectTypes, maxResults-totalObjectsSearched)
 		if err == nil && !pkgResult.Success {
@@ -454,23 +460,33 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 
 		// Check if we've reached max results
 		if maxResults > 0 && totalObjectsSearched >= maxResults {
+			capped = true
 			break
 		}
 	}
 
 	result.Success = searchedPackages > 0
-	result.Partial = len(result.Unsearched) > 0
+	result.Partial = len(result.Unsearched) > 0 || capped
 	if result.TotalMatches == 0 {
 		result.Message = fmt.Sprintf("No matches found in %d package(s)", searchedPackages)
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) across %d object(s) in %d package(s)",
 			result.TotalMatches, len(result.Objects), searchedPackages)
 	}
+	if capped {
+		result.Message += maxResultsNote(maxResults)
+	}
 	if note := UnsearchedNote(result.Unsearched, searchedPackages+len(result.Unsearched), "item"); note != "" {
 		result.Message += "\n" + note
 	}
 
 	return result, nil
+}
+
+// maxResultsNote says that max_results ended the walk, so the answer is not
+// known to be complete.
+func maxResultsNote(maxResults int) string {
+	return fmt.Sprintf("\nStopped at max_results=%d matching objects; the rest was not searched, so more may match (raise max_results or narrow the pattern).", maxResults)
 }
 
 // collectSubpackages recursively collects a package and all its subpackages.
