@@ -1551,10 +1551,25 @@ type InstalledComponent struct {
 func (c *Client) GetInstalledComponents(ctx context.Context) ([]InstalledComponent, error) {
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/system/components", &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "application/atom+xml;type=feed, application/xml;q=0.8",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting installed components: %w", err)
+	}
+
+	// 7.50 answers an Atom feed: entry id = component, entry title =
+	// "release;SP package;SP level;description".
+	var feed AtomFeed
+	if xml.Unmarshal(resp.Body, &feed) == nil {
+		result := make([]InstalledComponent, 0, len(feed.Entries))
+		for _, e := range feed.Entries {
+			ic := InstalledComponent{Name: e.ID, Description: e.Title}
+			if f := strings.SplitN(e.Title, ";", 4); len(f) == 4 {
+				ic = InstalledComponent{Name: e.ID, Release: f[0], SupportPack: f[2], Description: f[3]}
+			}
+			result = append(result, ic)
+		}
+		return result, nil
 	}
 
 	type componentXML struct {
