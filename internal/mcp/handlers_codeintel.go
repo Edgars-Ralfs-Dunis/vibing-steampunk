@@ -333,15 +333,17 @@ func formatClassComponents(comp *adt.ClassComponent) string {
 	types := []adt.ClassComponent{}
 	others := []adt.ClassComponent{}
 
+	// objectstructure sends the ADT codes (CLAS/OM, CLAS/OA, CLAS/OO, CLAS/OT),
+	// as classifyMemberKind in pkg/graph reads them.
 	for _, c := range comp.Components {
 		switch {
-		case strings.Contains(c.Type, "METH"):
+		case c.Type == "CLAS/OM" || strings.Contains(c.Type, "METH"):
 			methods = append(methods, c)
-		case strings.Contains(c.Type, "DATA") || strings.Contains(c.Type, "ATTR"):
+		case c.Type == "CLAS/OA" || strings.Contains(c.Type, "DATA") || strings.Contains(c.Type, "ATTR"):
 			attributes = append(attributes, c)
-		case strings.Contains(c.Type, "EVNT") || strings.Contains(c.Type, "EVENT"):
+		case c.Type == "CLAS/OO" || strings.Contains(c.Type, "EVNT") || strings.Contains(c.Type, "EVENT"):
 			events = append(events, c)
-		case strings.Contains(c.Type, "TYPE"):
+		case c.Type == "CLAS/OT" || strings.Contains(c.Type, "TYPE"):
 			types = append(types, c)
 		default:
 			others = append(others, c)
