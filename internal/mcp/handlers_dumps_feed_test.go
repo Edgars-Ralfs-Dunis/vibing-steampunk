@@ -14,7 +14,8 @@ import (
 
 // dumpFeed750Server answers the dumps feed with a real 7.50 body (one entry,
 // captured 2026-10-11, names anonymised) and 404s the detail resource, which
-// is what 7.50 does.
+// is what 7.50 does. Free SQL gets one BALHDR row, written on the server's
+// clock at 2026-09-18 22:19:50.
 func dumpFeed750Server(t *testing.T) *Server {
 	t.Helper()
 	feed, err := os.ReadFile("testdata/dumps-feed-750.xml")
@@ -26,6 +27,11 @@ func dumpFeed750Server(t *testing.T) *Server {
 		if r.URL.Path == "/sap/bc/adt/runtime/dumps" {
 			w.Header().Set("Content-Type", "application/atom+xml")
 			_, _ = w.Write(feed)
+			return
+		}
+		if r.URL.Path == "/sap/bc/adt/datapreview/freestyle" {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(balhdrRow))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -84,6 +90,28 @@ func TestADumpOutsideTheListingGetsUTCFromTheID(t *testing.T) {
 	}
 	if text := resultText(res); !strings.Contains(text, `"at": "2026-09-18T20:19:57Z"`) {
 		t.Errorf("want at 2026-09-18T20:19:57Z (22:19:57 CEST), got %s", text)
+	}
+}
+
+const balhdrRow = `<?xml version="1.0" encoding="utf-8"?><dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview">` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="LOGNUMBER"/><dataPreview:dataSet><dataPreview:data>00000000000000123456</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALDATE"/><dataPreview:dataSet><dataPreview:data>20260918</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALTIME"/><dataPreview:dataSet><dataPreview:data>221950</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`<dataPreview:columns><dataPreview:metadata dataPreview:name="ALUSER"/><dataPreview:dataSet><dataPreview:data>TESTUSER</dataPreview:data></dataPreview:dataSet></dataPreview:columns>` +
+	`</dataPreview:tableData>`
+
+// BALHDR's ALDATE/ALTIME are the server's clock; the dump's time is UTC since
+// b63904e. Compared as they were, the log row 7 s before the dump sat two hours
+// away and explain_dump answered "matches": [].
+func TestExplainDumpOutsideTheListingStillFindsTheLog(t *testing.T) {
+	s := dumpFeed750Server(t)
+	id := "/sap/bc/adt/vit/runtime/dumps/20260918221957devsys_A4H_00%20%20TESTUSER%20%20001%20%2033"
+	res, err := s.handleExplainDump(t.Context(), newRequest(map[string]any{"dump_id": id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !strings.Contains(text, "00000000000000123456") || !strings.Contains(text, "7s before") {
+		t.Errorf("want the BALHDR row 7s before the dump, got %s", text)
 	}
 }
 
