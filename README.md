@@ -734,7 +734,7 @@ The full version history is in [CHANGELOG.md](CHANGELOG.md).
 
 ### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
 
-**Recommended for most setups.** Single `SAP(action, target, params)` tool covers most of what the 149 individual tools do — gCTS, revision history and i18n still need `--mode expert`. The same tool is now registered in focused and expert too, so an agent in either can reach the `analyze` surface. Minimal token overhead, maximum capability.
+**Recommended for most setups.** Single `SAP(action, target, params)` tool covers most of what the 150 individual tools do — gCTS, revision history and i18n still need `--mode expert`. The same tool is now registered in focused and expert too, so an agent in either can reach the `analyze` surface. Minimal token overhead, maximum capability.
 
 ```
 SAP(action="read",   target="CLAS ZCL_TRAVEL")
@@ -743,7 +743,7 @@ SAP(action="create", target="DEVC", params={"name": "$ZOZIK", "description": "Ne
 SAP(action="help",   target="debug")
 ```
 
-| Metric | Focused (102 tools) | Expert (149 tools) | Hyperfocused (1 tool) |
+| Metric | Focused (102 tools) | Expert (150 tools) | Hyperfocused (1 tool) |
 |--------|-------------------:|-------------------:|----------------------:|
 | MCP schema tokens | ~14,000 | ~40,000 | **~200** |
 | Reduction | — | — | **99.5%** |
@@ -964,7 +964,7 @@ See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature r
 | **API Surface** | `vsp api-surface` — Clean Core inventory: which standard APIs does your code use? |
 | **Graph Export** | 7 formats: mermaid, HTML, DOT (Graphviz), PlantUML, GraphML (Gephi), JSON, MD |
 | **Static Analysis** | `vsp analyze` — 13 lint rules in pure Go, no external dependencies |
-| **Hyperfocused Mode** | 1 universal SAP tool, **~200 tokens** vs ~40K for 149 tools |
+| **Hyperfocused Mode** | 1 universal SAP tool, **~200 tokens** vs ~40K for 150 tools |
 | **Context Compression** | Auto-compressed dependency contracts — 7–30x compression, built-in ABAP parser |
 | **Method-Level Surgery** | Read/edit individual methods — 95% token reduction vs full-class round-trips |
 | **ABAP LSP** | Built-in Language Server — real-time diagnostics, go-to-definition, context push |
@@ -1297,7 +1297,7 @@ recovery down with it.
 vsp --url https://host:44300 --user admin --password secret
 vsp --url https://host:44300 --cookie-file cookies.txt
 vsp --url https://host:44300 --sso --sso-system dev   # browser SSO, self-refreshing
-vsp --mode expert          # Enable all 149 tools
+vsp --mode expert          # Enable all 150 tools
 vsp --mode hyperfocused    # Single SAP tool (~200 tokens instead of ~40K)
 ```
 
@@ -1495,7 +1495,7 @@ One axis, three values — `--mode` or `SAP_MODE`:
 
 ```mermaid
 graph LR
-    F["focused<br/>102 tools<br/>~14K tokens"] --> E["expert<br/>149 tools<br/>~40K tokens"]
+    F["focused<br/>102 tools<br/>~14K tokens"] --> E["expert<br/>150 tools<br/>~40K tokens"]
     E --> H["hyperfocused<br/>1 tool<br/>~200 tokens<br/><i>recommended</i>"]
     style H fill:#2d6a4f,color:#fff,stroke:#4ade80,stroke-width:2px
     style F fill:#264653,color:#fff
@@ -1504,7 +1504,7 @@ graph LR
 
 | Aspect | Focused | Expert | Hyperfocused (recommended) |
 |--------|:-:|:-:|:-:|
-| **Tools** | 102 essential | 149 complete | 1 universal `SAP()` |
+| **Tools** | 102 essential | 150 complete | 1 universal `SAP()` |
 | **Schema tokens** | ~14K | ~40K | **~200** |
 | **How AI calls it** | `GetSource(type, name)` | Same, + granular tools | `SAP(action, target, params)` |
 | **Documentation** | In tool schemas | In tool schemas | `SAP(action="help")` |
@@ -1514,7 +1514,7 @@ graph LR
 ```bash
 vsp --mode hyperfocused  # recommended — single SAP(action, target, params) tool
 vsp --mode focused       # 102 curated tools (individual tool names)
-vsp --mode expert        # all 149 tools individually
+vsp --mode expert        # all 150 tools individually
 ```
 
 ## DSL & Automation
@@ -1890,7 +1890,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 149 expert, 102 focused, 1 universal |
+| **Tools** | 150 expert, 102 focused, 1 universal |
 | **Unit Tests** | 1203 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 

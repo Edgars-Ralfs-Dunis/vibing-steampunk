@@ -1648,6 +1648,26 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 		), s.handleFindReferences)
 	}
 
+	if shouldRegister("FieldWhereUsed") {
+		s.mcpServer.AddTool(mcp.NewTool("FieldWhereUsed",
+			mcp.WithDescription("Code that uses a table field, from SAP's where-used index (WBCROSSGT), which ADT on 7.50 "+
+				"does not offer: classes with their methods, programs, includes. Read-only; local unit tests are left out "+
+				"but counted. An empty answer can mean the index is incomplete, so grep a likely package then. "+
+				"Infotype code mostly types against the Pnnnn structure: ask for P0001 as well as PA0001."),
+			mcp.WithString("table",
+				mcp.Required(),
+				mcp.Description("Table name, e.g. T549A"),
+			),
+			mcp.WithString("field",
+				mcp.Required(),
+				mcp.Description("Field name, e.g. CALCR"),
+			),
+			mcp.WithNumber("max_results",
+				mcp.Description("Most index rows to read (default 1000, at most 89999). The answer says when it cut the list."),
+			),
+		), s.handleFieldWhereUsed)
+	}
+
 	if shouldRegister("GetContext") {
 		s.mcpServer.AddTool(mcp.NewTool("GetContext",
 			mcp.WithDescription("Analyze ABAP source dependencies and return compressed public API contracts (prologue). Produces a compact summary of all referenced classes, interfaces, and function modules — showing only their public signatures. Use this to understand the surrounding codebase context before editing."),
