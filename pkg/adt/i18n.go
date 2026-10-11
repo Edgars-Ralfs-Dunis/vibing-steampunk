@@ -289,6 +289,7 @@ func (c *Client) GetTextPoolInLanguage(ctx context.Context, programName, lang st
 	// Asking with */* gets an HTML rendering of the same thing, which parses to
 	// nothing and would read as an empty text pool.
 	var entries []TextPoolEntry
+	missing := 0
 	for _, sub := range []struct {
 		name string
 		// ID is the classic READ TEXTPOOL id, so a caller who knows ABAP reads
@@ -313,11 +314,19 @@ func (c *Client) GetTextPoolInLanguage(ctx context.Context, programName, lang st
 			// A caller that treated the first 404 as fatal would lose the two
 			// kinds that did answer.
 			if IsNotFoundError(err) {
+				missing++
 				continue
 			}
 			return nil, fmt.Errorf("get text pool (%s): %w", sub.name, err)
 		}
 		entries = append(entries, parseTextPoolSource(sub.id, string(resp.Body))...)
+	}
+	// All three missing is not an empty text pool: 7.50 has no ADT
+	// text-element resource and answers 404 for every program, real or not.
+	if missing == 3 {
+		return nil, fmt.Errorf("text pool of %s not readable: 404 on symbols, selections and headings "+
+			"(the ADT text-element resource is absent on this release, or the program does not exist "+
+			"or has no text pool); GetTextElements reads it through the ZADT_VSP bridge", programName)
 	}
 
 	return entries, nil

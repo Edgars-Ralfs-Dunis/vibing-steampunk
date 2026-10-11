@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -260,5 +261,27 @@ func TestWriteOperationsCheckSafety(t *testing.T) {
 	// should NOT be a safety error
 	if err != nil && strings.Contains(err.Error(), "read-only") {
 		t.Error("GetDataElementLabels should not be blocked by read-only mode")
+	}
+}
+
+// 7.50 has no ADT text-element resource, so all three kinds answer 404, for a
+// program with a text pool and for one that does not exist alike. That must
+// not read as "no text pool entries".
+func TestGetTextPoolInLanguageAll404IsAnError(t *testing.T) {
+	mock := &funcMockClient{
+		doFunc: func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "discovery") {
+				return newTestResponse("OK"), nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{},
+				Body: io.NopCloser(strings.NewReader("ExceptionResourceNotFound"))}, nil
+		},
+	}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+	entries, err := client.GetTextPoolInLanguage(context.Background(), "ZRPTEXTPT_SPLIT", "EN")
+	if err == nil {
+		t.Fatalf("got %d entries and no error; three 404s are not an empty text pool", len(entries))
 	}
 }
