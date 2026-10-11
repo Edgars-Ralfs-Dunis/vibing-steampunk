@@ -259,3 +259,40 @@ func TestReferencesKeepsGradeDirectRowsWithoutIsResult(t *testing.T) {
 		t.Errorf("a where-used list with callers must not say nothing uses it: %v", out["note"])
 	}
 }
+
+// GetCallersOf reaches the where-used list through WhereUsed, not through the
+// FindReferences handler, so the handler's retry never helped it: a
+// /ddic/tables/ address answered 500 on 7.50, and TABL could not be named.
+func TestCallersOfATableReachTheWorkbenchAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method != http.MethodPost {
+			return
+		}
+		if strings.HasPrefix(r.URL.Query().Get("uri"), "/sap/bc/adt/ddic/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`<exc:exception><message lang="EN">Error while converting object references</message></exc:exception>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(references750XML))
+	}))
+	defer srv.Close()
+
+	s := &Server{adtClient: adt.NewClient(srv.URL, "user", "pass")}
+	for _, args := range []map[string]any{
+		{"object_uri": "/sap/bc/adt/ddic/tables/zala_change_log"},
+		{"object_type": "TABL", "object_name": "zala_change_log"},
+	} {
+		var req mcp.CallToolRequest
+		req.Params.Arguments = args
+		answer, err := s.callGraphAnswer(context.Background(), req, "callers")
+		if err != nil {
+			t.Errorf("%v: %v", args, err)
+			continue
+		}
+		if answer["total"] != 1 {
+			t.Errorf("%v: the workbench address knows ZCL_VSP_APC_HANDLER, got %v", args, answer["callers"])
+		}
+	}
+}

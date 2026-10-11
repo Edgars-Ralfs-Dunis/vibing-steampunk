@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -117,22 +116,11 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 
 	objectTypes := referenceTypeFilter(request.GetArguments()["object_types"])
 
-	usedURL := objectURL
-	results, err := s.adtClient.FindReferences(ctx, objectURL, line, column)
+	// A DDIC table that 7.50 refuses under its own address is retried under
+	// the workbench one inside the client; usedURL says which answered.
+	results, usedURL, err := s.adtClient.FindReferencesResolved(ctx, objectURL, line, column)
 	if err != nil {
-		// A 7.50 system answers a DDIC table's own address with a 500 ("Error
-		// while converting object references") and the same table under the
-		// generic workbench address with the right list. Retry once, and say so.
-		workbench, ok := workbenchAddress(objectURL)
-		if !ok {
-			return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
-		}
-		retried, retryErr := s.adtClient.FindReferences(ctx, workbench, line, column)
-		if retryErr != nil {
-			return newToolResultError(fmt.Sprintf("FindReferences failed: %v; retried as %s: %v",
-				err, workbench, retryErr)), nil
-		}
-		results, usedURL = retried, workbench
+		return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
 	}
 
 	// The where-used response is a tree flattened into a list, and most of it is
@@ -464,20 +452,6 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
-}
-
-// ddicAddress matches the ADT address of a DDIC table or structure.
-var ddicAddress = regexp.MustCompile(`(?i)^/sap/bc/adt/ddic/(tables|structures)/([^/?#]+)$`)
-
-// workbenchAddress gives the generic workbench address for a DDIC table or
-// structure address, the form the where-used resource answers on every release.
-func workbenchAddress(objectURL string) (string, bool) {
-	m := ddicAddress.FindStringSubmatch(objectURL)
-	if m == nil {
-		return "", false
-	}
-	kind := map[string]string{"tables": "tabldt", "structures": "tablds"}[strings.ToLower(m[1])]
-	return "/sap/bc/adt/vit/wb/object_type/" + kind + "/object_name/" + strings.ToUpper(m[2]), true
 }
 
 // referenceTypeFilter reads object_types: a comma-separated string, as the grep
