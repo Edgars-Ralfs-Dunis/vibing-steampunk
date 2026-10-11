@@ -1648,7 +1648,8 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 		s.mcpServer.AddTool(mcp.NewTool("FieldWhereUsed",
 			mcp.WithDescription("Code that uses a table field, from SAP's where-used index (WBCROSSGT), which ADT on 7.50 "+
 				"does not offer: classes with their methods, programs, includes. Read-only; local unit tests are left out "+
-				"but counted. An empty answer can mean the index is incomplete, so grep a likely package then."),
+				"but counted. An empty answer can mean the index is incomplete, so grep a likely package then. "+
+				"Infotype code mostly types against the Pnnnn structure: ask for P0001 as well as PA0001."),
 			mcp.WithString("table",
 				mcp.Required(),
 				mcp.Description("Table name, e.g. T549A"),

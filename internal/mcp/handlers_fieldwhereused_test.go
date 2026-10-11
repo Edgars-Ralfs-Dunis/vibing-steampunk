@@ -71,7 +71,8 @@ func TestFieldWhereUsed(t *testing.T) {
 			{"ZREPORT"}, {"ZREPORT_TOP"}, {"SAPLZFG"}, {"ZGONE"},
 		},
 		"TMDIR": {{"CLASSNAME", "METHODINDX", "METHODNAME"},
-			{"ZCL_DEMO", "10", "READ_CALCR"}, {"ZCL_DEMO", "36", "CHECK_CALCR"}},
+			// zero-padded like SAP, plus a cross-product row nobody asked for
+			{"ZCL_DEMO", "00010", "READ_CALCR"}, {"ZCL_DEMO", "00036", "CHECK_CALCR"}, {"ZCL_DEMO", "00002", "NOISE"}},
 		"TRDIR": {{"NAME", "SUBC"}, {"ZREPORT", "1"}, {"ZREPORT_TOP", "I"}, {"SAPLZFG", "F"}},
 	})
 	defer srv.Close()

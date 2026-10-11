@@ -179,7 +179,7 @@ func (c *Client) FieldWhereUsed(ctx context.Context, table, field string, maxRow
 	res.Counts.Includes, res.Counts.Other = len(res.Includes), len(res.Other)
 	switch {
 	case res.Truncated:
-		res.Note = fmt.Sprintf("WBCROSSGT has more than %d rows for %s-%s; only the first %d were read. "+
+		res.Note = fmt.Sprintf("WBCROSSGT has more than %d rows for %s-%s; %d of them were read, in no particular order. "+
 			"Raise max_results for the rest.", maxRows, table, field, maxRows)
 	case res.IndexRows == 0:
 		res.Note = fmt.Sprintf("WBCROSSGT has no rows for %s-%s. The index may be incomplete "+
