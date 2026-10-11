@@ -211,3 +211,19 @@ func TestGrepReachesTheFunctionModulesOfAGroup(t *testing.T) {
 		t.Fatalf("want 1 match and the group counted under FUGR/F, got %+v", pkg)
 	}
 }
+
+// F1-08: ADT sends CRLF; a $-anchored pattern must still match, and the
+// matched line must not carry the CR.
+func TestGrepObjectAnchorsAtEndOfLineInCRLFSource(t *testing.T) {
+	const fm = "/sap/bc/adt/functions/groups/btch/fmodules/job_submit"
+	srv := grepServer(t, map[string]string{fm + "/source/main": "FUNCTION JOB_SUBMIT\r\n  WRITE 'x'.\r\nENDFUNCTION.\r\n"}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepObject(context.Background(), fm, `^ENDFUNCTION\.$`, false, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MatchCount != 1 || res.Matches[0].MatchedLine != "ENDFUNCTION." || res.Matches[0].ContextBefore[0] != "  WRITE 'x'." {
+		t.Fatalf("want 1 CR-free match, got %+v", res)
+	}
+}

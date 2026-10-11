@@ -97,7 +97,8 @@ func (c *Client) GrepObject(ctx context.Context, objectURL, pattern string, case
 	result.Unsearched = missed
 
 	for s, source := range sources {
-		lines := strings.Split(source, "\n")
+		// ADT sends CRLF; a CR left on each line keeps $ from ever matching.
+		lines := strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
 
 		// Search for matches
 		for i, line := range lines {
