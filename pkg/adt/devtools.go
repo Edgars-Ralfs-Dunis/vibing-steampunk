@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -521,16 +522,9 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 		return nil, fmt.Errorf("getting inactive objects: %w", err)
 	}
 
-	// Filter by package if specified
-	var toActivate []InactiveObjectRecord
-	packageName = strings.ToUpper(packageName)
-	for _, rec := range inactive {
-		if rec.Object == nil || rec.Object.Name == "" || rec.Object.URI == "" {
-			continue
-		}
-		if packageName == "" || objectBelongsToPackage(rec.Object, packageName) {
-			toActivate = append(toActivate, rec)
-		}
+	toActivate, err := c.inactiveInPackage(ctx, inactive, packageName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Limit number of objects
@@ -584,6 +578,10 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 	}
 
 	result.Summary = fmt.Sprintf("Activated %d objects, %d failed", len(result.Activated), len(result.Failed))
+	if packageName != "" && len(toActivate) == 0 && len(inactive) > 0 {
+		result.Summary = fmt.Sprintf("WARNING: you have inactive objects, but none is in package %s, so nothing was activated "+
+			"(GetInactiveObjects lists them)", strings.ToUpper(packageName))
+	}
 	return result, nil
 }
 
@@ -601,14 +599,54 @@ func activationFailureReason(res *ActivationResult) string {
 	return "activation reported failure with no message"
 }
 
-// objectBelongsToPackage checks if an inactive object belongs to the given package.
-// Uses ParentURI which is populated from the inactive objects XML response.
-func objectBelongsToPackage(obj *InactiveObject, packageName string) bool {
-	if obj == nil || obj.ParentURI == "" {
-		return false
+// inactiveInPackage keeps the inactive objects of a package, all of them when
+// pkg is empty. A parentUri naming a package decides an entry; 7.50 sends no
+// parentUri at all, so the rest are looked up in TADIR, in one query.
+//
+// ponytail: matched by name alone, so a function module or a function group
+// include (no TADIR row of its own) is never found; TFDIR/the pool name is the
+// upgrade.
+func (c *Client) inactiveInPackage(ctx context.Context, inactive []InactiveObjectRecord, pkg string) ([]InactiveObjectRecord, error) {
+	pkg = strings.ToUpper(pkg)
+	const packages = "/sap/bc/adt/packages/"
+	var kept, undecided []InactiveObjectRecord
+	for _, rec := range inactive {
+		if rec.Object == nil || rec.Object.Name == "" || rec.Object.URI == "" {
+			continue
+		}
+		parent, _ := url.PathUnescape(strings.ToLower(rec.Object.ParentURI))
+		switch {
+		case pkg == "" || parent == packages+strings.ToLower(pkg):
+			kept = append(kept, rec)
+		case !strings.HasPrefix(parent, packages):
+			undecided = append(undecided, rec)
+		}
 	}
-	expectedURI := "/sap/bc/adt/packages/" + strings.ToLower(packageName)
-	return strings.EqualFold(obj.ParentURI, expectedURI)
+	if len(undecided) == 0 {
+		return kept, nil
+	}
+
+	var names []string
+	for _, rec := range undecided {
+		names = append(names, "'"+sqlQuote(strings.ToUpper(rec.Object.Name))+"'")
+	}
+	res, err := c.RunQuery(ctx, fmt.Sprintf("SELECT obj_name FROM tadir WHERE pgmid = 'R3TR' AND devclass = '%s' AND obj_name IN (%s)",
+		sqlQuote(pkg), strings.Join(names, ",")), 4*len(names))
+	if err != nil {
+		return nil, fmt.Errorf("finding which inactive objects are in package %s: %w", pkg, err)
+	}
+	in := map[string]bool{}
+	if res != nil {
+		for _, row := range res.Rows {
+			in[strings.ToUpper(cell(row, "OBJ_NAME"))] = true
+		}
+	}
+	for _, rec := range undecided {
+		if in[strings.ToUpper(rec.Object.Name)] {
+			kept = append(kept, rec)
+		}
+	}
+	return kept, nil
 }
 
 // ActivatePackageIterativeResult represents the result of iterative batch activation.
@@ -664,14 +702,11 @@ func (c *Client) ActivatePackageIterative(ctx context.Context, packageName strin
 	// Final diagnostic: check if any objects in this package are still inactive
 	inactive, err := c.GetInactiveObjects(ctx)
 	if err == nil {
-		for _, rec := range inactive {
-			if rec.Object == nil || rec.Object.Name == "" || rec.Object.URI == "" {
-				continue
-			}
-			if packageName == "" || objectBelongsToPackage(rec.Object, packageName) {
-				result.StillInactive++
-			}
+		still, err := c.inactiveInPackage(ctx, inactive, packageName)
+		if err != nil {
+			return nil, fmt.Errorf("checking what is still inactive: %w", err)
 		}
+		result.StillInactive = len(still)
 	}
 
 	// Build summary
