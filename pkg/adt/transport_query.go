@@ -271,14 +271,22 @@ func (c *Client) queryTransports(ctx context.Context, q TransportQuery) (*Transp
 		return c.transportsViaSQL(ctx, res)
 	}
 	if what := q.treeCannotAnswer(); what != "" {
-		res.note("a 7.50 organizer tree ignores %s; reading E070", what)
-		return c.transportsViaSQL(ctx, res)
+		r, err := c.transportsViaSQL(ctx, res)
+		if err == nil {
+			r.note("a 7.50 organizer tree ignores %s; read from E070", what)
+			return r, nil
+		}
+		res.note("%s needs E070, which failed: %v; trying the organizer tree", what, err)
 	}
+	// treeRes is the last tree answer that came back without error: an empty
+	// listing is still an answer when E070 cannot be read.
+	var treeRes *TransportQueryResult
 	if r, err := c.transportsViaParams(ctx, res); err != nil {
 		res.note("organizer tree with explicit parameters failed: %v", err)
 	} else if !r.Empty() {
 		return r, nil
 	} else {
+		treeRes = r
 		res.note("organizer tree with explicit parameters returned no requests")
 	}
 
@@ -287,11 +295,16 @@ func (c *Client) queryTransports(ctx context.Context, q TransportQuery) (*Transp
 	} else if !r.Empty() {
 		return r, nil
 	} else {
+		treeRes = r
 		res.note("organizer tree via search configuration %s returned no requests", r.ConfigURI)
 	}
 
 	r, err := c.transportsViaSQL(ctx, res)
 	if err != nil {
+		if treeRes != nil {
+			treeRes.note("E070 fallback failed: %v", err)
+			return treeRes, nil
+		}
 		return nil, fmt.Errorf("%w (before that: %s)", err, strings.Join(res.Notes, "; "))
 	}
 	return r, nil

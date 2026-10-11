@@ -546,3 +546,35 @@ func TestQueryTransportsAppliesFiltersTheTreeIgnored(t *testing.T) {
 		}
 	}
 }
+
+// F3-02/F3-04 review: under --block-free-sql the E070 read fails. Auto mode
+// still answers from the tree, for a filter a 7.57 tree honours and for an
+// ordinary empty listing; only an explicit source sql reports the failure.
+func TestQueryTransportsAutoAnswersFromTreeWhenSQLIsBlocked(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		listing string
+		q       TransportQuery
+	}{
+		{treeWithProjects, TransportQuery{User: "DEVELOPER", ReleasedFrom: "20260801", ReleasedTo: "20260831"}},
+		{treeWithProjects, TransportQuery{User: "DEVELOPER", RequestTypes: "T"}},
+		{emptyTree, TransportQuery{User: "DEVELOPER"}},
+	} {
+		client := (&ctsServer{listing: tc.listing}).start(t)
+		client.config.Safety.BlockFreeSQL = true
+		res, err := client.QueryTransports(ctx, tc.q)
+		if err != nil {
+			t.Errorf("%+v: %v", tc.q, err)
+			continue
+		}
+		if res.Source != TransportSourceParams || !strings.Contains(strings.Join(res.Notes, "\n"), "blocked") {
+			t.Errorf("%+v: source = %s, want params with the E070 failure noted (notes %v)", tc.q, res.Source, res.Notes)
+		}
+	}
+
+	client := (&ctsServer{listing: treeWithProjects}).start(t)
+	client.config.Safety.BlockFreeSQL = true
+	if _, err := client.QueryTransports(ctx, TransportQuery{User: "DEVELOPER", Source: TransportSourceSQL}); err == nil {
+		t.Errorf("source sql must report the blocked E070 read")
+	}
+}
