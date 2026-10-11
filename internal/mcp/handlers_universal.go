@@ -208,12 +208,16 @@ func wrapErr(op string, err error) *mcp.CallToolResult {
 }
 
 // newToolResultJSON marshals a value to JSON and returns it as a tool result.
+// & < > stay as they are: escaped, a T100 "&1" reads "\u00261" to the caller.
 func newToolResultJSON(v any) *mcp.CallToolResult {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return newToolResultError(fmt.Sprintf("JSON marshal error: %v", err))
 	}
-	return mcp.NewToolResultText(string(data))
+	return mcp.NewToolResultText(strings.TrimSuffix(b.String(), "\n"))
 }
 
 // handlerFunc is the type signature of all existing handler methods.

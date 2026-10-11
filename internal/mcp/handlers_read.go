@@ -320,8 +320,7 @@ func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToo
 		contents.Rows = nil
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(contents), nil
 }
 
 func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -350,8 +349,7 @@ func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest
 		return newToolResultError(fmt.Sprintf("Failed to run query: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(contents), nil
 }
 
 func (s *Server) handleGetCDSDependencies(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -452,8 +450,7 @@ func (s *Server) handleGetMessages(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError(fmt.Sprintf("Failed to get message class: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(mc, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(mc), nil
 }
 
 func (s *Server) handleGetTransaction(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

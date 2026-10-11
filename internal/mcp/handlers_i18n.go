@@ -77,12 +77,7 @@ func (s *Server) handleGetMessageClassTexts(ctx context.Context, request mcp.Cal
 		return mcp.NewToolResultText("No messages found."), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(texts, "", "  ")
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return newToolResultJSON(texts), nil
 }
 
 func (s *Server) handleWriteMessageClassTexts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
