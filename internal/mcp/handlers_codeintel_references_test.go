@@ -305,3 +305,36 @@ func TestCallersOfATableReachTheWorkbenchAddress(t *testing.T) {
 		}
 	}
 }
+
+// The callers graph hangs each caller under the target, and flattening it as
+// parent->child said ZCL_ADT_HTTP_GATE calls ZCL_VSP_APC_HANDLER: backwards.
+func TestAnalyzeCallGraphCallersPointAtTheTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(references750XML))
+		}
+	}))
+	defer srv.Close()
+
+	s := &Server{adtClient: adt.NewClient(srv.URL, "user", "pass")}
+	var req mcp.CallToolRequest
+	req.Params.Arguments = map[string]any{"object_type": "CLAS", "object_name": "ZCL_ADT_HTTP_GATE", "direction": "callers"}
+	result, err := s.handleAnalyzeCallGraph(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Edges []adt.CallGraphEdge `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(toolResultText(t, result)), &out); err != nil {
+		t.Fatalf("the answer should be JSON: %v", err)
+	}
+	if len(out.Edges) != 1 || out.Edges[0].CallerName != "ZCL_VSP_APC_HANDLER" || out.Edges[0].CalleeName != "ZCL_ADT_HTTP_GATE" {
+		t.Fatalf("want ZCL_VSP_APC_HANDLER -> ZCL_ADT_HTTP_GATE, got %+v", out.Edges)
+	}
+	if out.Edges[0].CallerURI != "/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" || out.Edges[0].CalleeKind != "CLAS" {
+		t.Errorf("the caller's URI and the target's kind belong on the edge, got %+v", out.Edges[0])
+	}
+}

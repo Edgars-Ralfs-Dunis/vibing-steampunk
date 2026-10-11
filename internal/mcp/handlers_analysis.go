@@ -371,6 +371,14 @@ func (s *Server) handleAnalyzeCallGraph(ctx context.Context, request mcp.CallToo
 
 	stats := adt.AnalyzeCallGraph(graph)
 	edges := adt.FlattenCallGraph(graph)
+	if direction == "callers" {
+		// The callers graph hangs each caller under the target, so the
+		// flattened parent->child edge reads backwards. Turn it round.
+		for i, e := range edges {
+			edges[i] = adt.CallGraphEdge{CallerURI: e.CalleeURI, CallerName: e.CalleeName,
+				CalleeURI: e.CallerURI, CalleeName: e.CallerName, CalleeKind: graph.Type, Line: e.Line}
+		}
+	}
 
 	output := map[string]interface{}{
 		"object_uri": objectURI,
