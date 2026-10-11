@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -16,6 +18,9 @@ type GrepMatch struct {
 	MatchedLine   string   `json:"matchedLine"`
 	ContextBefore []string `json:"contextBefore,omitempty"`
 	ContextAfter  []string `json:"contextAfter,omitempty"`
+	// Source is the include or function module the match is in, when the
+	// object's code spans more than one source; LineNumber counts within it.
+	Source string `json:"source,omitempty"`
 }
 
 // GrepObjectResult represents the result of grepping a single ABAP object.
@@ -27,6 +32,8 @@ type GrepObjectResult struct {
 	Matches    []GrepMatch `json:"matches"`
 	MatchCount int         `json:"matchCount"`
 	Message    string      `json:"message,omitempty"`
+	// Unsearched names the includes or function modules that could not be read.
+	Unsearched []Unsearched `json:"unsearched,omitempty"`
 }
 
 // GrepPackageResult represents the result of grepping an ABAP package.
@@ -36,6 +43,8 @@ type GrepPackageResult struct {
 	Objects      []GrepObjectResult `json:"objects"`
 	TotalMatches int                `json:"totalMatches"`
 	Message      string             `json:"message,omitempty"`
+	// Searched counts the objects read, by type: the coverage of the answer.
+	Searched map[string]int `json:"searched,omitempty"`
 	// Unsearched names the objects this sweep could not look at. Without it,
 	// "no matches found in 50 objects" is said about a search that reached
 	// thirty.
@@ -77,29 +86,30 @@ func (c *Client) GrepObject(ctx context.Context, objectURL, pattern string, case
 	}
 
 	// Get source code
-	sourceURL := objectURL
-	if !strings.HasSuffix(sourceURL, "/source/main") {
-		sourceURL = objectURL + "/source/main"
+	sourceURLs, sources, missed, err := c.grepSources(ctx, objectURL)
+	if err == nil && len(sources) == 0 && len(missed) > 0 {
+		err = errors.New(missed[0].Reason)
 	}
-
-	resp, err := c.transport.Request(ctx, sourceURL, &RequestOptions{
-		Method: "GET",
-		Accept: "text/plain",
-	})
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to read source: %v", err)
 		return result, nil
 	}
+	result.Unsearched = missed
 
-	source := string(resp.Body)
-	lines := strings.Split(source, "\n")
+	for s, source := range sources {
+		lines := strings.Split(source, "\n")
 
-	// Search for matches
-	for i, line := range lines {
-		if re.MatchString(line) {
+		// Search for matches
+		for i, line := range lines {
+			if !re.MatchString(line) {
+				continue
+			}
 			match := GrepMatch{
 				LineNumber:  i + 1, // 1-based line numbers
 				MatchedLine: line,
+			}
+			if len(sources) > 1 {
+				match.Source = sourceURLs[s]
 			}
 
 			// Add context lines before
@@ -132,8 +142,55 @@ func (c *Client) GrepObject(ctx context.Context, objectURL, pattern string, case
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) in %s", result.MatchCount, result.ObjectName)
 	}
+	if len(sources) > 1 {
+		result.Message += fmt.Sprintf(" (%d sources read)", len(sources))
+	}
+	if note := UnsearchedNote(missed, len(sources)+len(missed), "source"); note != "" {
+		result.Message += "\n" + note
+	}
 
 	return result, nil
+}
+
+var functionGroupURL = regexp.MustCompile(`(?i)^/sap/bc/adt/functions/groups/([^/]+)$`)
+
+// grepSources reads every source an object's code lives in. A function group's
+// /source/main is only the SAPL frame of INCLUDE lines and a class's is only
+// the global class, so both are expanded into their includes (and function
+// modules). An explicit .../source/main or class include URL is read as given.
+func (c *Client) grepSources(ctx context.Context, objectURL string) (urls, bodies []string, missed []Unsearched, err error) {
+	if m := functionGroupURL.FindStringSubmatch(objectURL); m != nil {
+		name, _ := url.PathUnescape(m[1])
+		return c.functionGroupSources(ctx, name)
+	}
+	isClass := strings.Contains(objectURL, "/oo/classes/")
+	urls = []string{objectURL}
+	if !strings.HasSuffix(objectURL, "/source/main") && !(isClass && strings.Contains(objectURL, "/includes/")) {
+		urls[0] += "/source/main"
+		if isClass {
+			for _, inc := range []string{"definitions", "implementations", "macros", "testclasses"} {
+				urls = append(urls, objectURL+"/includes/"+inc)
+			}
+		}
+	}
+
+	var read []string
+	for i, u := range urls {
+		resp, err := c.transport.Request(ctx, u, &RequestOptions{Method: "GET", Accept: "text/plain"})
+		var apiErr *APIError
+		switch {
+		case i == 0 && err != nil:
+			return nil, nil, nil, err
+		case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound:
+			// The class has no such include.
+		case err != nil:
+			missed = append(missed, Unsearched{Object: u, Reason: err.Error()})
+		default:
+			read = append(read, u)
+			bodies = append(bodies, string(resp.Body))
+		}
+	}
+	return read, bodies, missed, nil
 }
 
 // GrepObjectsResult represents the result of grepping multiple ABAP objects.
@@ -185,6 +242,7 @@ func (c *Client) GrepObjects(ctx context.Context, objectURLs []string, pattern s
 			continue
 		}
 		searched++
+		result.Unsearched = append(result.Unsearched, objResult.Unsearched...)
 
 		// Only include objects with matches
 		if objResult.MatchCount > 0 {
@@ -200,7 +258,7 @@ func (c *Client) GrepObjects(ctx context.Context, objectURLs []string, pattern s
 	} else {
 		result.Message = fmt.Sprintf("Found %d match(es) across %d object(s)", result.TotalMatches, len(result.Objects))
 	}
-	if note := UnsearchedNote(result.Unsearched, len(objectURLs), "object"); note != "" {
+	if note := UnsearchedNote(result.Unsearched, searched+len(result.Unsearched), "object"); note != "" {
 		result.Message += "\n" + note
 	}
 
@@ -221,6 +279,7 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 	result := &GrepPackageResult{
 		PackageName: packageName,
 		Objects:     []GrepObjectResult{},
+		Searched:    map[string]int{},
 	}
 
 	fail := func(reason string) (*GrepPackageResult, error) {
@@ -278,6 +337,8 @@ func (c *Client) GrepPackage(ctx context.Context, packageName, pattern string, c
 			continue
 		}
 		searched++
+		result.Searched[obj.Type]++
+		result.Unsearched = append(result.Unsearched, objResult.Unsearched...)
 
 		// Only include objects with matches
 		if objResult.MatchCount > 0 {
@@ -315,6 +376,8 @@ type GrepPackagesResult struct {
 	Objects      []GrepObjectResult `json:"objects"`
 	TotalMatches int                `json:"totalMatches"`
 	Message      string             `json:"message,omitempty"`
+	// Searched counts the objects read, by type: the coverage of the answer.
+	Searched map[string]int `json:"searched,omitempty"`
 	// Unsearched names what this sweep could not look at. Without it, a
 	// message counting every input describes a search that did not reach them.
 	Unsearched []Unsearched `json:"unsearched,omitempty"`
@@ -338,6 +401,7 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 	result := &GrepPackagesResult{
 		Packages: []string{},
 		Objects:  []GrepObjectResult{},
+		Searched: map[string]int{},
 	}
 
 	if len(packages) == 0 {
@@ -380,6 +444,9 @@ func (c *Client) GrepPackages(ctx context.Context, packages []string, includeSub
 		// A package that was searched only partly passes its own gaps up:
 		// they are the caller's gaps too.
 		result.Unsearched = append(result.Unsearched, pkgResult.Unsearched...)
+		for t, n := range pkgResult.Searched {
+			result.Searched[t] += n
+		}
 		result.Objects = append(result.Objects, pkgResult.Objects...)
 		result.TotalMatches += pkgResult.TotalMatches
 		totalObjectsSearched += len(pkgResult.Objects)

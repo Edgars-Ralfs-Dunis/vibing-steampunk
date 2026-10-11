@@ -137,3 +137,77 @@ func TestGrepPackageNamesTheObjectItCouldNotRead(t *testing.T) {
 		t.Fatalf("message must carry the caveat:\n%s", res.Message)
 	}
 }
+
+// F1-07: ADT serves a class include at .../includes/<name>, not under /source/main.
+func TestGrepObjectReadsAClassIncludeURL(t *testing.T) {
+	const inc = "/sap/bc/adt/oo/classes/zcl_hr_pa9950_fix/includes/testclasses"
+	srv := grepServer(t, map[string]string{inc: `*"* use this source file for your ABAP unit test classes`}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepObject(context.Background(), inc, ".", false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success || res.MatchCount != 1 {
+		t.Fatalf("want 1 match from the include itself, got %+v", res)
+	}
+}
+
+// F1-06: a class grep also reads the local definitions, implementations,
+// macros and test classes, and says which include each match came from.
+func TestGrepObjectReadsTheLocalIncludesOfAClass(t *testing.T) {
+	const cls = "/sap/bc/adt/oo/classes/zcl_ita2_classifier"
+	srv := grepServer(t, map[string]string{
+		cls + "/source/main":              "class ZCL_ITA2_CLASSIFIER definition\r\n  public.\r\nendclass.\r\n",
+		cls + "/includes/implementations": "* local helpers\r\n",
+		cls + "/includes/testclasses": "CLASS ltd_classifier DEFINITION FOR TESTING.\r\nENDCLASS.\r\n" +
+			"CLASS ltc_classifier DEFINITION FINAL FOR TESTING.\r\nENDCLASS.\r\n" +
+			"CLASS ltc_damaged_deletion DEFINITION FINAL FOR TESTING.\r\nENDCLASS.\r\n",
+		// definitions: 404, a class without that include
+	}, map[string]int{cls + "/includes/macros": http.StatusInternalServerError})
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepObject(context.Background(), cls, `(?i)^CLASS\s+lt\w+\s+DEFINITION`, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success || res.MatchCount != 3 {
+		t.Fatalf("want the 3 local test classes, got %+v", res)
+	}
+	if res.Matches[0].Source != cls+"/includes/testclasses" || res.Matches[0].LineNumber != 1 {
+		t.Fatalf("a match must name its include and keep the include's line number, got %+v", res.Matches[0])
+	}
+	if len(res.Unsearched) != 1 || res.Unsearched[0].Object != cls+"/includes/macros" {
+		t.Fatalf("the include that failed with 500 must be named; a 404 is just an absent include. got %+v", res.Unsearched)
+	}
+}
+
+// F1-04, F1-05: a function group's /source/main is only the SAPL frame; the
+// grep must reach its includes and function modules, also from a package.
+func TestGrepReachesTheFunctionModulesOfAGroup(t *testing.T) {
+	const fg = "/sap/bc/adt/functions/groups/zvsp_demo"
+	srv := grepServer(t, map[string]string{
+		fg + "/objectstructure":                      fugrStructure,
+		fg + "/source/main":                          "FUNCTION-POOL zvsp_demo.\r\nINCLUDE lzvsp_demotop.\r\n",
+		fg + "/includes/lzvsp_demotop/source/main":   "FUNCTION-POOL zvsp_demo.\r\n",
+		fg + "/fmodules/z_vsp_demo_call/source/main": "FUNCTION z_vsp_demo_call.\r\nENDFUNCTION.\r\n",
+		"/sap/bc/adt/repository/nodestructure":       nodeStructureWith([2]string{"FUGR/F", fg}),
+	}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	objs, err := client.GrepObjects(context.Background(), []string{fg}, `(?i)^\s*FUNCTION\s`, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objs.TotalMatches != 1 || objs.Objects[0].Matches[0].Source != fg+"/fmodules/z_vsp_demo_call/source/main" {
+		t.Fatalf("want the FUNCTION line of the module, got %+v", objs)
+	}
+
+	pkg, err := client.GrepPackage(context.Background(), "ZPKG", `(?i)^\s*FUNCTION\s`, false, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.TotalMatches != 1 || pkg.Searched["FUGR/F"] != 1 {
+		t.Fatalf("want 1 match and the group counted under FUGR/F, got %+v", pkg)
+	}
+}

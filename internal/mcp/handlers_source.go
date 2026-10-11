@@ -271,7 +271,7 @@ func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequ
 // registerGrepObjects registers the unified GrepObjects tool
 func (s *Server) registerGrepObjects() {
 	s.mcpServer.AddTool(mcp.NewTool("GrepObjects",
-		mcp.WithDescription("Unified tool for searching regex patterns in single or multiple ABAP objects. Replaces GrepObject."),
+		mcp.WithDescription("Unified tool for searching regex patterns in single or multiple ABAP objects. Replaces GrepObject. Function groups are read with their includes and function modules, classes with their local includes; objects that could not be read are listed in unsearched."),
 		mcp.WithArray("object_urls",
 			mcp.Required(),
 			mcp.Description("Array of ADT object URLs to search (e.g., [\"/sap/bc/adt/programs/programs/ZTEST\"])"),

@@ -639,6 +639,21 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 // below lands in the same list, because a caveat written only to stderr is no
 // caveat at all to an MCP caller.
 func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName string) (string, []Unsearched, error) {
+	_, bodies, missed, err := c.functionGroupSources(ctx, groupName)
+	if err != nil {
+		return "", nil, err
+	}
+	var combined strings.Builder
+	for _, body := range bodies {
+		combined.WriteString(body)
+		combined.WriteString("\n")
+	}
+	return combined.String(), missed, nil
+}
+
+// functionGroupSources reads every source of a function group separately: the
+// URIs and bodies of the non-empty sources that were read, and what was not.
+func (c *Client) functionGroupSources(ctx context.Context, groupName string) ([]string, []string, []Unsearched, error) {
 	groupName = strings.ToLower(groupName)
 
 	structPath := fmt.Sprintf("/sap/bc/adt/functions/groups/%s/objectstructure", url.PathEscape(groupName))
@@ -647,7 +662,7 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
 	})
 	if err != nil {
-		return "", nil, fmt.Errorf("getting function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting function group structure: %w", err)
 	}
 
 	type atomLink struct {
@@ -662,7 +677,7 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 	}
 	var root element
 	if err := xml.Unmarshal(resp.Body, &root); err != nil {
-		return "", nil, fmt.Errorf("parsing function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("parsing function group structure: %w", err)
 	}
 
 	seen := make(map[string]bool)
@@ -787,15 +802,14 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		}
 	}
 
-	var combined strings.Builder
-	for _, body := range results {
-		if body == "" {
-			continue
+	var uris, bodies []string
+	for idx, body := range results {
+		if body != "" {
+			uris = append(uris, srcURIs[idx])
+			bodies = append(bodies, body)
 		}
-		combined.WriteString(body)
-		combined.WriteString("\n")
 	}
-	return combined.String(), missed, nil
+	return uris, bodies, missed, nil
 }
 
 // GetFunction retrieves the source code of a function module.

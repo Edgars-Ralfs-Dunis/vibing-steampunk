@@ -1536,10 +1536,10 @@ func (s *Server) registerEditTools(shouldRegister func(string) bool) {
 func (s *Server) registerGrepTools(shouldRegister func(string) bool) {
 	if shouldRegister("GrepObject") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepObject",
-			mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing."),
+			mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing. A function group URL is read whole (frame, includes, function modules) and a class URL with its local definitions, implementations, macros and test classes; each match then names its source and counts lines within it. A .../source/main or class include URL reads only that source."),
 			mcp.WithString("object_url",
 				mcp.Required(),
-				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST, /sap/bc/adt/functions/groups/ZFG, /sap/bc/adt/oo/classes/ZCL_X/includes/testclasses)"),
 			),
 			mcp.WithString("pattern",
 				mcp.Required(),
@@ -1556,7 +1556,7 @@ func (s *Server) registerGrepTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GrepPackage") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepPackage",
-			mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object. Use for package-wide analysis, finding patterns across multiple programs/classes."),
+			mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object, objects read per type (searched) and anything that could not be read (unsearched, partial). Function groups are read with their includes and function modules, classes with their local includes. Use for package-wide analysis, finding patterns across multiple programs/classes."),
 			mcp.WithString("package_name",
 				mcp.Required(),
 				mcp.Description("Package name (e.g., $TMP, ZPACKAGE)"),
