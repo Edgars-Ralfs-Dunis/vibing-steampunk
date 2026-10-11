@@ -318,3 +318,22 @@ func TestGrepPackageIsParallelAndStopsAtItsDeadline(t *testing.T) {
 		t.Fatalf("want 7 matches and zslow unsearched, got %+v", res)
 	}
 }
+
+// F1-09: like grep -C, overlapping context windows show each line once.
+func TestGrepObjectContextWindowsDoNotRepeatLines(t *testing.T) {
+	const inc = "/sap/bc/adt/programs/includes/mpe00f00"
+	srv := grepServer(t, map[string]string{inc + "/source/main": "l1\nl2\nFORM a.\nl4\nFORM b.\nl6\nl7\nl8\nl9\nl10"}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	res, err := client.GrepObject(context.Background(), inc, "^FORM", false, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown []string
+	for _, m := range res.Matches {
+		shown = append(append(append(shown, m.ContextBefore...), m.MatchedLine), m.ContextAfter...)
+	}
+	if got := strings.Join(shown, ","); got != "l1,l2,FORM a.,l4,FORM b.,l6,l7" {
+		t.Fatalf("want each line once, in order, got %s", got)
+	}
+}

@@ -104,34 +104,31 @@ func (c *Client) GrepObject(ctx context.Context, objectURL, pattern string, case
 		lines := strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
 
 		// Search for matches
+		var hits []int
 		for i, line := range lines {
-			if !re.MatchString(line) {
-				continue
+			if re.MatchString(line) {
+				hits = append(hits, i)
 			}
+		}
+		// Like grep -C, a line goes out once: a window stops at the next
+		// match, and the next window starts where this one ended.
+		shown := 0
+		for k, i := range hits {
 			match := GrepMatch{
 				LineNumber:  i + 1, // 1-based line numbers
-				MatchedLine: line,
+				MatchedLine: lines[i],
 			}
 			if len(sources) > 1 {
 				match.Source = sourceURLs[s]
 			}
-
-			// Add context lines before
 			if contextLines > 0 {
-				start := i - contextLines
-				if start < 0 {
-					start = 0
+				end := min(i+contextLines+1, len(lines))
+				if k+1 < len(hits) {
+					end = min(end, hits[k+1])
 				}
-				match.ContextBefore = lines[start:i]
-			}
-
-			// Add context lines after
-			if contextLines > 0 {
-				end := i + contextLines + 1
-				if end > len(lines) {
-					end = len(lines)
-				}
+				match.ContextBefore = lines[max(i-contextLines, shown):i]
 				match.ContextAfter = lines[i+1 : end]
+				shown = end
 			}
 
 			result.Matches = append(result.Matches, match)
