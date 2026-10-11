@@ -214,6 +214,32 @@ func TestGrepReachesTheFunctionModulesOfAGroup(t *testing.T) {
 	}
 }
 
+// F1-04, F1-05 on 7.50: objectstructure answers 404 there, so the group's
+// includes and modules come from the node structure (a type-only header row
+// is not a source).
+func TestGrepReachesTheFunctionModulesOfAGroupWithoutObjectStructure(t *testing.T) {
+	const fg = "/sap/bc/adt/functions/groups/zvsp_demo"
+	srv := grepServer(t, map[string]string{
+		"/sap/bc/adt/repository/nodestructure": `<?xml version="1.0" encoding="utf-8"?><asx:abap version="1.0" xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><TREE_CONTENT>` +
+			`<SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>FUGR/FF</OBJECT_TYPE><OBJECT_NAME/><TECH_NAME>SAPLZVSP_DEMO</TECH_NAME><OBJECT_URI/></SEU_ADT_REPOSITORY_OBJ_NODE>` +
+			`<SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>FUGR/I</OBJECT_TYPE><OBJECT_NAME>LZVSP_DEMOTOP</OBJECT_NAME><OBJECT_URI>` + fg + `/includes/lzvsp_demotop</OBJECT_URI></SEU_ADT_REPOSITORY_OBJ_NODE>` +
+			`<SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>FUGR/FF</OBJECT_TYPE><OBJECT_NAME>Z_VSP_DEMO_CALL</OBJECT_NAME><OBJECT_URI>` + fg + `/fmodules/z_vsp_demo_call</OBJECT_URI></SEU_ADT_REPOSITORY_OBJ_NODE>` +
+			`</TREE_CONTENT></DATA></asx:values></asx:abap>`,
+		fg + "/source/main":                          "FUNCTION-POOL zvsp_demo.\r\nINCLUDE lzvsp_demotop.\r\n",
+		fg + "/includes/lzvsp_demotop/source/main":   "FUNCTION-POOL zvsp_demo.\r\n",
+		fg + "/fmodules/z_vsp_demo_call/source/main": "FUNCTION z_vsp_demo_call.\r\nENDFUNCTION.\r\n",
+	}, nil)
+	client := NewClient(srv.URL, "user", "pass")
+
+	objs, err := client.GrepObjects(context.Background(), []string{fg}, `(?i)^\s*FUNCTION\s`, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !objs.Success || objs.TotalMatches != 1 || objs.Objects[0].Matches[0].Source != fg+"/fmodules/z_vsp_demo_call/source/main" || len(objs.Unsearched) != 0 {
+		t.Fatalf("want the FUNCTION line of the module and nothing unsearched, got %+v", objs)
+	}
+}
+
 // F1-08: ADT sends CRLF; a $-anchored pattern must still match, and the
 // matched line must not carry the CR.
 func TestGrepObjectAnchorsAtEndOfLineInCRLFSource(t *testing.T) {

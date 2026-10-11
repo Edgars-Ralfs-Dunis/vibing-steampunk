@@ -628,6 +628,7 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 //
 // The function group's objectstructure endpoint enumerates all FUGR/I (includes) and
 // FUGR/FF (function modules); we resolve each child's source/main URI and concatenate.
+// 7.50 answers 404 there, and the repository node structure lists the same children.
 // Individual sub-fetches that fail are skipped (best-effort) so a single broken include
 // does not hide deps from the rest of the group.
 //
@@ -661,6 +662,24 @@ func (c *Client) functionGroupSources(ctx context.Context, groupName string) ([]
 		Method: http.MethodGet,
 		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
 	})
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		// 7.50 has no objectstructure (see compat.go); the node structure
+		// lists the same includes and modules on both releases.
+		nodes, err := c.functionGroupNodes(ctx, strings.ToUpper(groupName))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		srcURIs := []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
+		for _, n := range nodes {
+			// A category header row has a type and no URI.
+			t, uri := strings.TrimSpace(n.ObjectType), strings.TrimSpace(n.ObjectURI)
+			if (t == "FUGR/I" || t == "FUGR/FF") && uri != "" {
+				srcURIs = append(srcURIs, uri+"/source/main")
+			}
+		}
+		return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("getting function group structure: %w", err)
 	}
@@ -710,6 +729,11 @@ func (c *Client) functionGroupSources(ctx context.Context, groupName string) ([]
 		// Fallback: at least fetch the top-level source so we get something.
 		srcURIs = []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
 	}
+	return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+}
+
+// readFunctionGroupSources fetches the given sources of a function group.
+func (c *Client) readFunctionGroupSources(ctx context.Context, groupName string, srcURIs []string) ([]string, []string, []Unsearched, error) {
 	sort.Strings(srcURIs)
 
 	var missed []Unsearched
