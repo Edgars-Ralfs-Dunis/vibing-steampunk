@@ -65,17 +65,27 @@ func (s *Server) handleUI5ListApps(ctx context.Context, request mcp.CallToolRequ
 		maxResults = int(mr)
 	}
 
-	apps, err := s.adtClient.UI5ListApps(ctx, query, maxResults)
+	apps, matched, total, err := s.adtClient.UI5ListApps(ctx, query, maxResults)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("UI5ListApps failed: %v", err)), nil
 	}
 
 	if len(apps) == 0 {
+		if query != "" {
+			return mcp.NewToolResultText(fmt.Sprintf("No UI5 applications match %q (%d in SAP's answer)", query, total)), nil
+		}
 		return mcp.NewToolResultText("No UI5 applications found"), nil
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Found %d UI5 applications:\n\n", len(apps))
+	fmt.Fprintf(&sb, "Found %d UI5 applications", matched)
+	if query != "" {
+		fmt.Fprintf(&sb, " matching %q (of %d in SAP's answer)", query, total)
+	}
+	if len(apps) < matched {
+		fmt.Fprintf(&sb, ", showing the first %d (max_results)", len(apps))
+	}
+	sb.WriteString(":\n\n")
 
 	for _, app := range apps {
 		fmt.Fprintf(&sb, "- %s", app.Name)

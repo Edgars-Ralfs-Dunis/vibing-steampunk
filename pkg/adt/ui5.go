@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -87,9 +88,12 @@ type UI5Content struct {
 
 // UI5ListApps lists UI5/Fiori BSP applications.
 // The query parameter supports wildcards (* for multiple chars).
-func (c *Client) UI5ListApps(ctx context.Context, query string, maxResults int) ([]UI5App, error) {
+// 7.50's filestore ignores name= and maxResults= and answers the whole
+// catalogue, so the match and the cap are applied here as well. It returns
+// the apps shown, how many matched, and how many SAP answered in total.
+func (c *Client) UI5ListApps(ctx context.Context, query string, maxResults int) (apps []UI5App, matched, total int, err error) {
 	if err := c.checkSafety(OpRead, "UI5ListApps"); err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 
 	if maxResults <= 0 {
@@ -108,26 +112,38 @@ func (c *Client) UI5ListApps(ctx context.Context, query string, maxResults int) 
 		Accept: "application/atom+xml",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing UI5 apps: %w", err)
+		return nil, 0, 0, fmt.Errorf("listing UI5 apps: %w", err)
 	}
 
 	// Parse Atom feed response
 	var feed UI5AtomFeed
 	if err := xml.Unmarshal(resp.Body, &feed); err != nil {
-		return nil, fmt.Errorf("parsing UI5 apps list: %w", err)
+		return nil, 0, 0, fmt.Errorf("parsing UI5 apps list: %w", err)
+	}
+
+	// Anchored, case-insensitive; * matches anything, including the / in
+	// namespaced names such as /MIBCON/HR_PDF.
+	var re *regexp.Regexp
+	if query != "" {
+		re = regexp.MustCompile("(?i)^" + strings.ReplaceAll(regexp.QuoteMeta(query), `\*`, ".*") + "$")
 	}
 
 	// Convert Atom entries to UI5App
-	apps := make([]UI5App, 0, len(feed.Entries))
 	for _, entry := range feed.Entries {
-		apps = append(apps, UI5App{
-			Name:        entry.Title,
-			Description: entry.Summary,
-			URI:         entry.ID,
-		})
+		if re != nil && !re.MatchString(entry.Title) {
+			continue
+		}
+		matched++
+		if len(apps) < maxResults {
+			apps = append(apps, UI5App{
+				Name:        entry.Title,
+				Description: entry.Summary,
+				URI:         entry.ID,
+			})
+		}
 	}
 
-	return apps, nil
+	return apps, matched, len(feed.Entries), nil
 }
 
 // UI5GetApp retrieves details of a UI5/Fiori BSP application.
