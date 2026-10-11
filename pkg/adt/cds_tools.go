@@ -77,9 +77,10 @@ func parseCDSImpactAnalysis(data []byte, viewName string) (*CDSImpactAnalysisRes
 		PackageRef  packageRef `xml:"packageRef"`
 	}
 	type referencedObject struct {
-		URI       string    `xml:"uri,attr"`
-		IsResult  bool      `xml:"isResult,attr"`
-		AdtObject adtObject `xml:"adtObject"`
+		URI              string    `xml:"uri,attr"`
+		IsResult         bool      `xml:"isResult,attr"`
+		UsageInformation string    `xml:"usageInformation,attr"`
+		AdtObject        adtObject `xml:"adtObject"`
 	}
 	type referencedObjects struct {
 		Objects []referencedObject `xml:"referencedObject"`
@@ -101,7 +102,8 @@ func parseCDSImpactAnalysis(data []byte, viewName string) (*CDSImpactAnalysisRes
 	}
 
 	for _, obj := range resp.Objects.Objects {
-		if obj.IsResult {
+		// 7.50 marks class and report consumers gradeDirect, not isResult.
+		if obj.IsResult || strings.Contains(obj.UsageInformation, "gradeDirect") {
 			result.ImpactedObjects = append(result.ImpactedObjects, CDSImpactedObject{
 				URI:         obj.AdtObject.URI,
 				Type:        obj.AdtObject.Type,

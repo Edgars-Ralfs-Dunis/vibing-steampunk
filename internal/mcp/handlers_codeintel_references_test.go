@@ -217,3 +217,45 @@ func TestReferencesRetriesATableUnderTheWorkbenchAddress(t *testing.T) {
 		t.Errorf("the workbench address knows two callers, got %d", len(refs))
 	}
 }
+
+// A 7.50 system (ZED) sets isResult on no row of this answer. For
+// ZCL_ADT_HTTP_GATE its one caller, a method of ZCL_VSP_APC_HANDLER, and for
+// ZALA_CHANGE_LOG the reports filed straight under their package, all arrive as
+// isResult="false" rows carrying usageInformation="gradeDirect" — the rows
+// GetCallersOf reads. Filtering on isResult alone said "nothing uses it".
+const references750XML = `<?xml version="1.0" encoding="utf-8"?><usageReferences:usageReferenceResult><usageReferences:referencedObjects>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/packages/zadt_vsp" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZADT_VSP" adtcore:type="DEVC/K"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" parentUri="/sap/bc/adt/packages/zadt_vsp" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZCL_VSP_APC_HANDLER" adtcore:type="CLAS/OC"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler/source/main#type=CLAS%2FOM;name=IF_APC_WSP_EXTENSION~ON_ACCEPT" parentUri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" isResult="false" usageInformation="gradeDirect,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="IF_APC_WSP_EXTENSION~ON_ACCEPT" adtcore:type="CLAS/OM"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/packages/zala" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZALA" adtcore:type="DEVC/K"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/programs/programs/zala_fulldump_selection" parentUri="/sap/bc/adt/packages/zala" isResult="false" usageInformation="gradeDirect,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="ZALA_FULLDUMP_SELECTION" adtcore:type="PROG/P"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_adt_http_gate/source/main#type=CLAS%2FOM;name=IS_AUTHORIZED" parentUri="/sap/bc/adt/oo/classes/zcl_adt_http_gate" isResult="false" usageInformation="gradeComponent,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="IS_AUTHORIZED" adtcore:type="CLAS/OM"/></usageReferences:referencedObject>` +
+	`</usageReferences:referencedObjects></usageReferences:usageReferenceResult>`
+
+func TestReferencesKeepsGradeDirectRowsWithoutIsResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(references750XML))
+		}
+	}))
+	defer srv.Close()
+
+	out := referencesAnswer(t, srv, map[string]any{"object_url": "/sap/bc/adt/oo/classes/zcl_adt_http_gate"})
+	if out["total"] != float64(2) {
+		t.Errorf("the caller's method and the report are references, got total %v", out["total"])
+	}
+	if out["scaffolding"] != float64(4) {
+		t.Errorf("two packages, one class container and the target's own part are not, got scaffolding %v", out["scaffolding"])
+	}
+	if out["note"] != nil {
+		t.Errorf("a where-used list with callers must not say nothing uses it: %v", out["note"])
+	}
+}

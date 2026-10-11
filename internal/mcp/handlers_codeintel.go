@@ -148,10 +148,14 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	// The type filter runs before the cap. A table is used by structures as much
 	// as by code, and on one system the first fifty of T549A's 393 references
 	// were all structures: capped first, a question about code found none.
+	//
+	// A 7.50 system sets isResult only on leaf rows (includes, modules): class
+	// and report hits arrive with isResult false and usageInformation
+	// gradeDirect, the mark GetCallersOf reads (exposedCallers). Both count.
 	hits := make([]adt.UsageReference, 0, len(results))
 	filteredOut := 0
 	for _, r := range results {
-		if !r.IsResult {
+		if !r.IsResult && !strings.Contains(r.UsageInformation, "gradeDirect") {
 			continue
 		}
 		if !referenceTypeMatches(r.Type, objectTypes) {
