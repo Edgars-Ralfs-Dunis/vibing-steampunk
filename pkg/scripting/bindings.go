@@ -145,6 +145,12 @@ func (e *LuaEngine) luaGrepObjects(L *lua.LState) int {
 			L.SetField(row, "uri", lua.LString(obj.ObjectURL))
 			L.SetField(row, "name", lua.LString(obj.ObjectName))
 			L.SetField(row, "line", lua.LNumber(match.LineNumber))
+			// source is where line counts: the include or module, else the object.
+			source := match.Source
+			if source == "" {
+				source = obj.ObjectURL
+			}
+			L.SetField(row, "source", lua.LString(source))
 			L.SetField(row, "content", lua.LString(match.MatchedLine))
 			tbl.RawSetInt(idx, row)
 			idx++

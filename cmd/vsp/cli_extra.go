@@ -483,7 +483,11 @@ func runGrep(cmd *cobra.Command, args []string) error {
 	totalMatches := 0
 	for _, obj := range result.Objects {
 		for _, m := range obj.Matches {
-			fmt.Printf("%s:%d: %s\n", obj.ObjectURL, m.LineNumber, strings.TrimSpace(m.MatchedLine))
+			loc := obj.ObjectURL
+			if m.Source != "" {
+				loc = m.Source // the line number counts within this include or module
+			}
+			fmt.Printf("%s:%d: %s\n", loc, m.LineNumber, strings.TrimSpace(m.MatchedLine))
 			totalMatches++
 		}
 	}
