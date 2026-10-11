@@ -338,7 +338,7 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		result.Message = fmt.Sprintf("Object %s already exists (use mode=update or mode=upsert)", name)
 		return result, nil
 	}
-	if actualMode == WriteModeUpdate && !objectExists {
+	if actualMode == WriteModeUpdate && opts.Mode == WriteModeUpsert && !objectExists {
 		result.Message = fmt.Sprintf("Object %s does not exist (use mode=create or mode=upsert)", name)
 		return result, nil
 	}

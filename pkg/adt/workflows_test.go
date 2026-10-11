@@ -219,6 +219,25 @@ WRITE: 'Updated!'.`
 	}
 }
 
+// An explicit mode=update never probes existence, so it must go on to lock the
+// object instead of refusing it as missing (847f2bd).
+func TestWriteSource_ModeUpdate_LocksInsteadOfRefusing(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, lockWindowRoute)
+
+	result, err := client.WriteSource(context.Background(), "PROG", "ZDEMO_PROBE", "REPORT zdemo_probe.\n",
+		&WriteSourceOptions{Mode: WriteModeUpdate})
+	if err != nil {
+		t.Fatalf("WriteSource: %v", err)
+	}
+	if strings.Contains(result.Message, "does not exist") {
+		t.Fatalf("mode=update refused as missing: %q", result.Message)
+	}
+	if indexOfCall(rec.snapshot(), isLock) < 0 {
+		t.Fatalf("no LOCK POST; trace:\n%v", rec.snapshot())
+	}
+}
+
 // TestClient_GrepObjects tests GrepObjects with multiple objects
 func TestClient_GrepObjects(t *testing.T) {
 	sourceCode1 := `REPORT ztest1.
