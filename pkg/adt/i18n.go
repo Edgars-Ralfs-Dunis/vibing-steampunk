@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,17 +35,53 @@ type DataElementLabels struct {
 
 // dataElementDoc is the representation ADT actually serves for a data element.
 //
-// Only the four labels are mapped. The document also carries the domain, the
-// type, the field lengths and a dozen flags, and mapping those would be
-// inventing a feature under cover of a bug fix.
+// The labels are for GetDataElementLabels; name, description, type, length and
+// decimals for GetTypeInfo. The document also carries the domain, the field
+// lengths and a dozen flags, which no caller asks for.
 type dataElementDoc struct {
 	XMLName     xml.Name `xml:"wbobj"`
+	Name        string   `xml:"name,attr"`
+	Description string   `xml:"description,attr"`
 	DataElement struct {
-		Short   string `xml:"shortFieldLabel"`
-		Medium  string `xml:"mediumFieldLabel"`
-		Long    string `xml:"longFieldLabel"`
-		Heading string `xml:"headingFieldLabel"`
+		DataType string `xml:"dataType"`
+		Length   int    `xml:"dataTypeLength"`
+		Decimals int    `xml:"dataTypeDecimals"`
+		Short    string `xml:"shortFieldLabel"`
+		Medium   string `xml:"mediumFieldLabel"`
+		Long     string `xml:"longFieldLabel"`
+		Heading  string `xml:"headingFieldLabel"`
 	} `xml:"dataElement"`
+}
+
+// getDataElement reads a data element's representation. 7.50 serves only
+// dataelements.v1 and answers v2 with 406 (upstream #153); the two documents
+// have the same shape for what dataElementDoc reads.
+func (c *Client) getDataElement(ctx context.Context, name, lang string) (*dataElementDoc, error) {
+	opts := &RequestOptions{
+		Method: http.MethodGet,
+		// The versioned vocabulary type, not application/xml. The generic one
+		// is refused with 406 "The message content is not acceptable" on every
+		// name, namespaced or not. Checked against 7.58 with both a plain and a
+		// namespaced element, because a 406 on one name and a 406 on all names
+		// are different bugs.
+		Accept:           "application/vnd.sap.adt.dataelements.v2+xml",
+		OverrideLanguage: lang,
+	}
+	path := fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", url.PathEscape(strings.ToUpper(name)))
+	resp, err := c.transport.Request(ctx, path, opts)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotAcceptable {
+		opts.Accept = "application/vnd.sap.adt.dataelements.v1+xml"
+		resp, err = c.transport.Request(ctx, path, opts)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc dataElementDoc
+	if err := xml.Unmarshal(resp.Body, &doc); err != nil {
+		return nil, fmt.Errorf("parse data element: %w", err)
+	}
+	return &doc, nil
 }
 
 // TextPoolEntry represents a single text pool entry (text element/symbol) of a program.
@@ -97,28 +134,9 @@ func (c *Client) GetDataElementLabels(ctx context.Context, name, lang string) (*
 		return nil, err
 	}
 
-	name = strings.ToUpper(name)
-	lang = strings.ToUpper(lang)
-
-	path := fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", url.PathEscape(name))
-	resp, err := c.transport.Request(ctx, path, &RequestOptions{
-		Method: http.MethodGet,
-		// The versioned vocabulary type, not application/xml. The generic one
-		// is refused with 406 "The message content is not acceptable" on every
-		// name, namespaced or not — so this call had never returned a label to
-		// anybody. Checked against 7.58 with both a plain and a namespaced
-		// element, because a 406 on one name and a 406 on all names are
-		// different bugs.
-		Accept:           "application/vnd.sap.adt.dataelements.v2+xml",
-		OverrideLanguage: lang,
-	})
+	doc, err := c.getDataElement(ctx, name, strings.ToUpper(lang))
 	if err != nil {
 		return nil, fmt.Errorf("get data element labels: %w", err)
-	}
-
-	var doc dataElementDoc
-	if err := xml.Unmarshal(resp.Body, &doc); err != nil {
-		return nil, fmt.Errorf("parse data element labels: %w", err)
 	}
 
 	// An element with no translation in the requested language answers in its

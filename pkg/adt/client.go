@@ -1413,35 +1413,17 @@ type TypeInfo struct {
 
 // GetTypeInfo retrieves information about a data type.
 func (c *Client) GetTypeInfo(ctx context.Context, typeName string) (*TypeInfo, error) {
-	typeName = strings.ToUpper(typeName)
-
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", typeName), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	doc, err := c.getDataElement(ctx, typeName, "")
 	if err != nil {
 		return nil, fmt.Errorf("getting type info: %w", err)
 	}
 
-	type typeData struct {
-		Name        string `xml:"name,attr"`
-		Type        string `xml:"type,attr"`
-		Description string `xml:"description,attr"`
-		Length      int    `xml:"length,attr"`
-		Decimals    int    `xml:"decimals,attr"`
-	}
-
-	var td typeData
-	if err := xml.Unmarshal(resp.Body, &td); err != nil {
-		return nil, fmt.Errorf("parsing type info: %w", err)
-	}
-
 	return &TypeInfo{
-		Name:        td.Name,
-		Type:        td.Type,
-		Description: td.Description,
-		Length:      td.Length,
-		Decimals:    td.Decimals,
+		Name:        doc.Name,
+		Type:        doc.DataElement.DataType,
+		Description: doc.Description,
+		Length:      doc.DataElement.Length,
+		Decimals:    doc.DataElement.Decimals,
 	}, nil
 }
 
