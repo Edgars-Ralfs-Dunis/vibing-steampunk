@@ -91,7 +91,12 @@ func (f DumpFilter) matches(d Dump) bool {
 	eq := func(want, got string) bool {
 		return want == "" || strings.EqualFold(strings.TrimSpace(want), got)
 	}
-	return eq(f.ErrorType, d.ErrorType) && eq(f.Program, d.Program) && eq(f.User, d.User)
+	// A class dies as its pool, ZCL_X=====CP; the class name names it too.
+	program := eq(f.Program, d.Program)
+	if i := strings.Index(d.Program, "="); !program && i > 0 {
+		program = eq(f.Program, d.Program[:i])
+	}
+	return eq(f.ErrorType, d.ErrorType) && program && eq(f.User, d.User)
 }
 
 // parseDumpFeed reads the Atom feed. The categories are what matter: SAP labels
