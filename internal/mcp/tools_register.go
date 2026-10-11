@@ -1658,7 +1658,7 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 				mcp.Description("Field name, e.g. CALCR"),
 			),
 			mcp.WithNumber("max_results",
-				mcp.Description("Most index rows to read (default 1000). The answer says when it cut the list."),
+				mcp.Description("Most index rows to read (default 1000, at most 89999). The answer says when it cut the list."),
 			),
 		), s.handleFieldWhereUsed)
 	}

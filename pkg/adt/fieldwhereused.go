@@ -72,6 +72,8 @@ func (c *Client) FieldWhereUsed(ctx context.Context, table, field string, maxRow
 	if maxRows <= 0 {
 		maxRows = 1000
 	}
+	// Above UnlimitedRows the data preview silently returns ~100 rows, which would read as complete.
+	maxRows = min(maxRows, UnlimitedRows-1)
 
 	// The backslash is literal in ABAP SQL.
 	index, err := c.GetTableContents(ctx, "WBCROSSGT", maxRows+1,

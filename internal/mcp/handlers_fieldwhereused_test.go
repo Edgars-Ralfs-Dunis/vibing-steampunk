@@ -120,6 +120,16 @@ func TestFieldWhereUsedSaysWhenItCutTheIndex(t *testing.T) {
 	}
 }
 
+func TestFieldWhereUsedCapsMaxResultsBelowTheDataPreviewCutoff(t *testing.T) {
+	srv, sent := fieldUsageServer(t, map[string][][]string{"WBCROSSGT": {{"INCLUDE"}}})
+	defer srv.Close()
+
+	fieldUsageCall(t, srv, map[string]any{"table": "T549A", "field": "CALCR", "max_results": float64(1000000)})
+	if !strings.HasPrefix((*sent)[0], "WBCROSSGT 90000: ") {
+		t.Errorf("rowNumber above 90000 comes back as ~100 rows that look complete, sent %q", (*sent)[0])
+	}
+}
+
 func TestFieldWhereUsedEmptyIndexPointsToGrep(t *testing.T) {
 	srv, _ := fieldUsageServer(t, map[string][][]string{"WBCROSSGT": {{"INCLUDE"}}})
 	defer srv.Close()
