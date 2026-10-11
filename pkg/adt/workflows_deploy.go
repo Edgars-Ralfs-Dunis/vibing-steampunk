@@ -574,6 +574,9 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 				}, nil
 			}
 			// Regular object - create it
+			if packageName == "" {
+				return nil, fmt.Errorf("%s %s does not exist yet: package_name is required to create it", info.ObjectType, info.ObjectName)
+			}
 			return c.CreateFromFile(ctx, filePath, packageName, transport)
 		}
 		// Authentication, network and server failures are inconclusive. Do not
