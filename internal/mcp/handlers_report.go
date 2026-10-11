@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -64,12 +66,8 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
-		var p map[string]string
-		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
-		}
-		params.Params = p
+	if params.Params, err = reportParams(request.GetArguments()["params"]); err != nil {
+		return newToolResultError(err.Error()), nil
 	}
 
 	// Step 1: Schedule background job via WebSocket
@@ -111,7 +109,18 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	fmt.Fprintf(&sb, "%s\n", s.bridgeAttributionFor(client))
 	fmt.Fprintf(&sb, "Report: %s\n", result.Report)
 	fmt.Fprintf(&sb, "Job: %s/%s\n", result.JobName, result.JobCount)
-	fmt.Fprintf(&sb, "Status: %s\n\n", jobStatus.Status)
+	fmt.Fprintf(&sb, "Status: %s\n", jobStatus.Status)
+	if jobStatus.Server != "" {
+		fmt.Fprintf(&sb, "Server: %s\n", jobStatus.Server)
+	}
+	if jobStatus.Status == "aborted" {
+		if len(jobStatus.JobLog) > 0 {
+			fmt.Fprintf(&sb, "Job log:\n  %s\n", strings.Join(jobStatus.JobLog, "\n  "))
+		} else {
+			fmt.Fprintf(&sb, "The bridge sent no reason: read the job log with BP_JOBLOG_READ (JOBNAME %s, JOBCOUNT %s).\n", result.JobName, result.JobCount)
+		}
+	}
+	sb.WriteString("\n")
 
 	// Step 4: Get spool output if available
 	if len(jobStatus.SpoolIDs) > 0 {
@@ -130,7 +139,84 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 		sb.WriteString("No spool output produced.\n")
 	}
 
-	return mcp.NewToolResultText(sb.String()), nil
+	res := mcp.NewToolResultText(sb.String())
+	res.IsError = jobStatus.Status == "aborted"
+	return res, nil
+}
+
+// reportParams reads RunReport's params, a JSON object (or its text) whose
+// values are a PARAMETERS value or a select-option row: a string, an object
+// {"SIGN","OPTION","LOW","HIGH"}, or an array of those.
+//
+// ponytail: the deployed ZADT_VSP report service turns each value into one I/EQ
+// row and drops anything else without a word, so the report would run
+// unrestricted. Only that shape is sent; a real range is refused until the
+// service parses typed rows (RWF 6, needs a supervised ABAP redeploy).
+func reportParams(raw any) (map[string]string, error) {
+	if text, ok := raw.(string); ok {
+		if text == "" {
+			return nil, nil
+		}
+		if err := json.Unmarshal([]byte(text), &raw); err != nil {
+			return nil, fmt.Errorf("Invalid params JSON: %v", err)
+		}
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("params must be a JSON object keyed by selection-screen name")
+	}
+	out := make(map[string]string, len(obj))
+	for name, v := range obj {
+		if rows, ok := v.([]any); ok && len(rows) == 1 {
+			v = rows[0]
+		}
+		var low string
+		switch row := v.(type) {
+		case string:
+			low = row
+		case map[string]any:
+			fields := map[string]string{}
+			for k, f := range row {
+				k = strings.ToUpper(k)
+				fs, ok := f.(string)
+				if !ok || (k != "SIGN" && k != "OPTION" && k != "LOW" && k != "HIGH") {
+					return nil, fmt.Errorf("params %s: a row takes the strings SIGN, OPTION, LOW and HIGH, got %s", name, k)
+				}
+				fields[k] = fs
+			}
+			if fields["SIGN"] != "" && fields["SIGN"] != "I" || fields["OPTION"] != "" && fields["OPTION"] != "EQ" || fields["HIGH"] != "" {
+				return nil, fmt.Errorf("params %s: only a single I/EQ value can be passed until the ZADT_VSP report service is redeployed; the deployed bridge drops ranges (BT, E, HIGH, patterns) and would run the report without them", name)
+			}
+			low = fields["LOW"]
+		case []any:
+			return nil, fmt.Errorf("params %s: only a single I/EQ value can be passed until the ZADT_VSP report service is redeployed; the deployed bridge keeps one row per select-option and would drop the rest", name)
+		default:
+			return nil, fmt.Errorf("params %s: a value must be a string, a {SIGN,OPTION,LOW,HIGH} row or an array of rows", name)
+		}
+		if utf8.RuneCountInString(name) > 8 {
+			return nil, fmt.Errorf("params %s: a selection-screen name has at most 8 characters (RSPARAMS-SELNAME) and SAP would cut it", name)
+		}
+		// The deployed bridge reads params with a regex and counts braces without
+		// skipping strings: JSON escapes arrive as escape text and a brace ends
+		// the object early, so the report would run with a changed or dropped row.
+		if strings.ContainsAny(name+low, "\"\\<>&{}\u2028\u2029") || strings.IndexFunc(name+low, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf("params %s: the deployed ZADT_VSP bridge would change a name or value holding \" \\ < > & { } or a control character; use a variant until the report service is redeployed", name)
+		}
+		if utf8.RuneCountInString(low) > 45 {
+			return nil, fmt.Errorf("params %s: value is %d characters, a selection-screen value holds at most 45 (RSPARAMS-LOW) and SAP would cut it", name, utf8.RuneCountInString(low))
+		}
+		// The bridge upper-cases names anyway; sending them so keeps a field
+		// named report or variant from being read as the program or variant.
+		sel := strings.ToUpper(name)
+		if _, dup := out[sel]; dup {
+			return nil, fmt.Errorf("params %s: given twice; selection-screen names are not case-sensitive", sel)
+		}
+		out[sel] = low
+	}
+	return out, nil
 }
 
 func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -158,12 +244,8 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
-		var p map[string]string
-		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
-		}
-		params.Params = p
+	if params.Params, err = reportParams(request.GetArguments()["params"]); err != nil {
+		return newToolResultError(err.Error()), nil
 	}
 
 	// Generate task ID
@@ -267,6 +349,8 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 			"job_status":   jobStatus.Status,
 			"spool_ids":    jobStatus.SpoolIDs,
 			"spool_output": spoolOutput.String(),
+			"joblog":       jobStatus.JobLog,
+			"server":       jobStatus.Server,
 		}
 		s.asyncTasksMu.Unlock()
 	}()

@@ -39,10 +39,8 @@ func (s *Server) handleDeployFromFile(ctx context.Context, request mcp.CallToolR
 		return newToolResultError("file_path is required"), nil
 	}
 
-	packageName, ok := request.GetArguments()["package_name"].(string)
-	if !ok || packageName == "" {
-		return newToolResultError("package_name is required"), nil
-	}
+	// Only a create needs it; DeployFromFile asks when the object is new.
+	packageName, _ := request.GetArguments()["package_name"].(string)
 
 	transport := ""
 	if t, ok := request.GetArguments()["transport"].(string); ok {
