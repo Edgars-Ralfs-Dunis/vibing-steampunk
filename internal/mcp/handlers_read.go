@@ -423,6 +423,13 @@ func (s *Server) handleGetPackage(ctx context.Context, request mcp.CallToolReque
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get package: %v", err)), nil
 	}
+	// SAP answers a package that does not exist with the same empty tree as
+	// an empty one; only a direct probe tells them apart.
+	if len(pkg.Objects) == 0 && len(pkg.SubPackages) == 0 {
+		if exists, err := s.adtClient.PackageExists(ctx, packageName); err == nil && !exists {
+			return newToolResultError(fmt.Sprintf("Package %s does not exist", pkg.Name)), nil
+		}
+	}
 
 	result, _ := json.MarshalIndent(pkg, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil

@@ -3,11 +3,15 @@ package scripting
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
 func TestNewLuaEngine(t *testing.T) {
@@ -562,5 +566,36 @@ func TestGlobalFunctionsRegistered(t *testing.T) {
 	err := engine.Execute("assert(type(json) == 'table', 'json is not a table')")
 	if err != nil {
 		t.Errorf("json module is not registered: %v", err)
+	}
+}
+
+// F1-06: a match in a class include names that include, where its line counts.
+func TestGrepObjectsNamesTheIncludeAMatchIsIn(t *testing.T) {
+	const cls = "/sap/bc/adt/oo/classes/zcl_x"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sap/bc/adt/repository/informationsystem/search":
+			w.Write([]byte(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="` + cls + `" adtcore:type="CLAS/OC" adtcore:name="ZCL_X"/></adtcore:objectReferences>`))
+		case cls + "/source/main":
+			w.Write([]byte("class ZCL_X definition.\r\nendclass.\r\n"))
+		case cls + "/includes/testclasses":
+			w.Write([]byte("CLASS ltc_x DEFINITION FOR TESTING.\r\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	engine := NewLuaEngine(adt.NewClient(srv.URL, "user", "pass"))
+	defer engine.Close()
+
+	if err := engine.Execute(`r = grepObjects("ltc_x", "ZCL_X")[1]`); err != nil {
+		t.Fatal(err)
+	}
+	r := engine.L.GetGlobal("r").(*lua.LTable)
+	if src := r.RawGetString("source").String(); src != cls+"/includes/testclasses" {
+		t.Fatalf("source = %q, want the include", src)
+	}
+	if uri := r.RawGetString("uri").String(); uri != cls {
+		t.Fatalf("uri = %q, want the class", uri)
 	}
 }

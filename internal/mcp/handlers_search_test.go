@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // TestHandleSearchObject_ServerSideTypeFilter verifies the MCP search path goes
@@ -70,4 +72,55 @@ func TestHandleSearchObject_ServerSideTypeFilter(t *testing.T) {
 	if got := q.Get("query"); got != "Z*" {
 		t.Errorf("query = %q, want %q", got, "Z*")
 	}
+}
+
+// F1-12: the truncation note tells callers to "raise max_results", so the
+// handler must read that name too, not only maxResults.
+func TestHandleSearchObjectAcceptsMaxResultsSnakeCase(t *testing.T) {
+	var sent string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "informationsystem/search") {
+			sent = r.URL.Query().Get("maxResults")
+		}
+		w.Header().Set("X-CSRF-Token", "test-token")
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`))
+	}))
+	defer ts.Close()
+	server := NewServer(&Config{BaseURL: ts.URL, Username: "u", Password: "p", Client: "001", Language: "EN"})
+
+	if _, err := server.handleSearchObject(context.Background(), newRequest(map[string]any{
+		"query": "ZCL_VSP*", "max_results": float64(2),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if sent != "3" {
+		t.Fatalf("max_results 2 should ask SAP for 3 (2 plus the truncation probe), sent %q", sent)
+	}
+}
+
+// F1-13: the handler filters by objectType; the schema must offer it.
+func TestSearchObjectSchemaOffersObjectType(t *testing.T) {
+	server := NewServer(&Config{BaseURL: "https://sap.example.com:44300", Username: "u", Password: "p", Client: "001"})
+	raw := server.mcpServer.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	response, ok := raw.(mcp.JSONRPCResponse)
+	if !ok {
+		t.Fatalf("expected JSONRPCResponse, got %T", raw)
+	}
+	var tools []mcp.Tool
+	switch result := response.Result.(type) {
+	case mcp.ListToolsResult:
+		tools = result.Tools
+	case *mcp.ListToolsResult:
+		tools = result.Tools
+	}
+	for _, tool := range tools {
+		if tool.Name == "SearchObject" {
+			if _, ok := tool.InputSchema.Properties["objectType"]; !ok {
+				t.Fatal("SearchObject reads objectType but its schema does not offer it")
+			}
+			return
+		}
+	}
+	t.Fatal("SearchObject is not registered")
 }

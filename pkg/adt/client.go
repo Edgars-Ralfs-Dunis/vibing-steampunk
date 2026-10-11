@@ -628,6 +628,7 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 //
 // The function group's objectstructure endpoint enumerates all FUGR/I (includes) and
 // FUGR/FF (function modules); we resolve each child's source/main URI and concatenate.
+// 7.50 answers 404 there, and the repository node structure lists the same children.
 // Individual sub-fetches that fail are skipped (best-effort) so a single broken include
 // does not hide deps from the rest of the group.
 //
@@ -639,6 +640,21 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 // below lands in the same list, because a caveat written only to stderr is no
 // caveat at all to an MCP caller.
 func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName string) (string, []Unsearched, error) {
+	_, bodies, missed, err := c.functionGroupSources(ctx, groupName)
+	if err != nil {
+		return "", nil, err
+	}
+	var combined strings.Builder
+	for _, body := range bodies {
+		combined.WriteString(body)
+		combined.WriteString("\n")
+	}
+	return combined.String(), missed, nil
+}
+
+// functionGroupSources reads every source of a function group separately: the
+// URIs and bodies of the non-empty sources that were read, and what was not.
+func (c *Client) functionGroupSources(ctx context.Context, groupName string) ([]string, []string, []Unsearched, error) {
 	groupName = strings.ToLower(groupName)
 
 	structPath := fmt.Sprintf("/sap/bc/adt/functions/groups/%s/objectstructure", url.PathEscape(groupName))
@@ -646,8 +662,26 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		Method: http.MethodGet,
 		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
 	})
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		// 7.50 has no objectstructure (see compat.go); the node structure
+		// lists the same includes and modules on both releases.
+		nodes, err := c.functionGroupNodes(ctx, strings.ToUpper(groupName))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		srcURIs := []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
+		for _, n := range nodes {
+			// A category header row has a type and no URI.
+			t, uri := strings.TrimSpace(n.ObjectType), strings.TrimSpace(n.ObjectURI)
+			if (t == "FUGR/I" || t == "FUGR/FF") && uri != "" {
+				srcURIs = append(srcURIs, uri+"/source/main")
+			}
+		}
+		return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+	}
 	if err != nil {
-		return "", nil, fmt.Errorf("getting function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting function group structure: %w", err)
 	}
 
 	type atomLink struct {
@@ -662,7 +696,7 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 	}
 	var root element
 	if err := xml.Unmarshal(resp.Body, &root); err != nil {
-		return "", nil, fmt.Errorf("parsing function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("parsing function group structure: %w", err)
 	}
 
 	seen := make(map[string]bool)
@@ -695,6 +729,11 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		// Fallback: at least fetch the top-level source so we get something.
 		srcURIs = []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
 	}
+	return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+}
+
+// readFunctionGroupSources fetches the given sources of a function group.
+func (c *Client) readFunctionGroupSources(ctx context.Context, groupName string, srcURIs []string) ([]string, []string, []Unsearched, error) {
 	sort.Strings(srcURIs)
 
 	var missed []Unsearched
@@ -787,15 +826,14 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		}
 	}
 
-	var combined strings.Builder
-	for _, body := range results {
-		if body == "" {
-			continue
+	var uris, bodies []string
+	for idx, body := range results {
+		if body != "" {
+			uris = append(uris, srcURIs[idx])
+			bodies = append(bodies, body)
 		}
-		combined.WriteString(body)
-		combined.WriteString("\n")
 	}
-	return combined.String(), missed, nil
+	return uris, bodies, missed, nil
 }
 
 // GetFunction retrieves the source code of a function module.
@@ -1025,11 +1063,17 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 // Unlike GetPackage, which reads the nodestructure API and cannot distinguish
 // "package does not exist" from "package exists but has no children" (both
 // return an empty tree), this is a definitive existence check.
+//
+// 7.50 has no package resource: the probe answers 404 "No suitable resource
+// found" for packages that exist too (ZED, 2026-10-11, ZADT_VSP and
+// ZFIX_DATA). A 404 is therefore settled by the quick search, which on 7.50
+// returns the DEVC/K reference for an existing package and nothing otherwise.
 func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, error) {
 	if packageName == "" {
 		return false, fmt.Errorf("empty package name")
 	}
-	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(strings.ToUpper(packageName)))
+	name := strings.ToUpper(packageName)
+	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(name))
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "application/*",
@@ -1038,10 +1082,19 @@ func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, e
 		return true, nil
 	}
 	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-		return false, nil
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false, err
 	}
-	return false, err
+	hits, err := c.SearchObjectByType(ctx, name, "DEVC/K", 10)
+	if err != nil {
+		return false, fmt.Errorf("checking package %s by search: %w", name, err)
+	}
+	for _, h := range hits {
+		if strings.EqualFold(h.Name, name) && strings.HasPrefix(h.Type, "DEVC") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GetPackage retrieves the contents of a package using the nodestructure API.

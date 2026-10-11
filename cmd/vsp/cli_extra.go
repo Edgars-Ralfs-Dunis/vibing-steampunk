@@ -469,7 +469,13 @@ func runGrep(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("grep failed: %w\n\nNote: GrepPackage uses standard ADT search — no ZADT_VSP required", err)
 	}
 
-	if result == nil || len(result.Objects) == 0 {
+	if !result.Success {
+		return fmt.Errorf("%s", result.Message)
+	}
+	if result.Partial {
+		fmt.Fprintln(os.Stderr, result.Message)
+	}
+	if len(result.Objects) == 0 {
 		fmt.Println("No matches")
 		return nil
 	}
@@ -477,7 +483,11 @@ func runGrep(cmd *cobra.Command, args []string) error {
 	totalMatches := 0
 	for _, obj := range result.Objects {
 		for _, m := range obj.Matches {
-			fmt.Printf("%s:%d: %s\n", obj.ObjectURL, m.LineNumber, strings.TrimSpace(m.MatchedLine))
+			loc := obj.ObjectURL
+			if m.Source != "" {
+				loc = m.Source // the line number counts within this include or module
+			}
+			fmt.Printf("%s:%d: %s\n", loc, m.LineNumber, strings.TrimSpace(m.MatchedLine))
 			totalMatches++
 		}
 	}
@@ -2127,7 +2137,10 @@ func runGraphWhereUsedConfig(cmd *cobra.Command, args []string) error {
 					// there". A grep that failed must not be filed under it.
 					grepFailed++
 					fmt.Fprintf(os.Stderr, "WARN: %s %s could not be grepped: %v\n", c.objType, c.objName, err)
-				case grepResult != nil && len(grepResult.Matches) > 0:
+				case !grepResult.Success:
+					grepFailed++
+					fmt.Fprintf(os.Stderr, "WARN: %s %s could not be grepped: %s\n", c.objType, c.objName, grepResult.Message)
+				case len(grepResult.Matches) > 0:
 					confirmed = true
 					grepCount++
 				}
