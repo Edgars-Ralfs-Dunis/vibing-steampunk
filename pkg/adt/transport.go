@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // --- Transport Types ---
@@ -86,10 +87,7 @@ func (c *Client) GetUserTransports(ctx context.Context, userName string) (*UserT
 }
 
 // userTransportsViaSQL groups the E070/E07T fallback rows the way the ADT tree
-// would have. A failing query is already swallowed inside listTransportsViaSQL;
-// what comes back as an error here is a caller mistake — no user name at all,
-// or one that is not a user name — and that is worth saying out loud rather
-// than answering with an empty list a second time.
+// would have.
 func (c *Client) userTransportsViaSQL(ctx context.Context, user string) (*UserTransports, error) {
 	rows, err := c.listTransportsViaSQL(ctx, user)
 	if err != nil {
@@ -458,14 +456,15 @@ func as4userPredicate(user string) (string, error) {
 // and customizing requests. Used as the last fallback when the organizer tree
 // answers nothing (common on sandbox systems without transport routes).
 func (c *Client) listTransportsViaSQL(ctx context.Context, user string) ([]TransportSummary, error) {
-	return c.listTransportsViaSQLQuery(ctx, user, "KW", "D")
+	return c.listTransportsViaSQLQuery(ctx, user, "KW", "D", "", "")
 }
 
 // listTransportsViaSQLQuery is listTransportsViaSQL with the request types
 // (letters of K, W, T) and statuses (letters of D, R) spelled out. Request
 // texts come in the session language, the way the organizer tree delivers
-// them, instead of English only.
-func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, statuses string) ([]TransportSummary, error) {
+// them, instead of English only. Released rows are bounded by from..to
+// (YYYYMMDD), the last 14 days when both are empty, as the organizer does.
+func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, statuses, from, to string) ([]TransportSummary, error) {
 	// '*' is the wildcard Eclipse ADT uses for "every user". It was being
 	// compared literally (AS4USER = '*'), which no row matches, so the wildcard
 	// answered "no transports found" instead of everyone's (#140).
@@ -483,6 +482,13 @@ func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, sta
 	if predicate != "" {
 		conditions = append([]string{predicate}, conditions...)
 	}
+	if strings.Contains(statuses, "R") {
+		if from == "" {
+			now := time.Now()
+			from, to = now.AddDate(0, 0, -14).Format("20060102"), now.Format("20060102")
+		}
+		conditions = append(conditions, "( e070~TRSTATUS IN ('D', 'L') OR e070~AS4DATE BETWEEN '"+from+"' AND '"+to+"' )")
+	}
 
 	query := `SELECT e070~TRKORR, e070~TRFUNCTION, e070~TRSTATUS, e070~TARSYSTEM,
 		e070~AS4USER, e070~AS4DATE, e070~AS4TIME, e07t~AS4TEXT
@@ -491,10 +497,9 @@ func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, sta
 		WHERE ` + strings.Join(conditions, "\n\t\tAND ") + `
 		ORDER BY e070~TRKORR DESCENDING`
 
-	result, err := c.RunQuery(ctx, query, 100)
+	result, err := c.RunQuery(ctx, query, ResolveRowLimit(true, 0))
 	if err != nil {
-		// If SQL query fails, return empty list (not an error)
-		return []TransportSummary{}, nil
+		return nil, fmt.Errorf("reading E070/E07T: %w", err)
 	}
 
 	var transports []TransportSummary

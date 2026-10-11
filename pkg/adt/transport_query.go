@@ -270,7 +270,11 @@ func (c *Client) queryTransports(ctx context.Context, q TransportQuery) (*Transp
 		res.note("organizer tree via search configuration %s returned no requests", r.ConfigURI)
 	}
 
-	return c.transportsViaSQL(ctx, res)
+	r, err := c.transportsViaSQL(ctx, res)
+	if err != nil {
+		return nil, fmt.Errorf("%w (before that: %s)", err, strings.Join(res.Notes, "; "))
+	}
+	return r, nil
 }
 
 func (r *TransportQueryResult) note(format string, args ...any) {
@@ -362,7 +366,7 @@ func (c *Client) transportsViaConfig(ctx context.Context, res *TransportQueryRes
 // transportsViaSQL reads E070/E07T directly.
 func (c *Client) transportsViaSQL(ctx context.Context, res *TransportQueryResult) (*TransportQueryResult, error) {
 	q := res.Query
-	rows, err := c.listTransportsViaSQLQuery(ctx, q.User, q.RequestTypes, q.RequestStatuses)
+	rows, err := c.listTransportsViaSQLQuery(ctx, q.User, q.RequestTypes, q.RequestStatuses, q.ReleasedFrom, q.ReleasedTo)
 	if err != nil {
 		return nil, err
 	}
