@@ -149,7 +149,7 @@ func TestResolveRevisionURL(t *testing.T) {
 			objectType: "INTF",
 			objName:    "ZIF_TEST",
 			opts:       &GetSourceOptions{},
-			wantURL:    "/sap/bc/adt/oo/interfaces/ZIF_TEST/includes/main/versions",
+			wantURL:    "/sap/bc/adt/oo/interfaces/ZIF_TEST/source/main/versions",
 		},
 		{
 			name:       "FUNC",

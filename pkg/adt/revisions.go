@@ -122,7 +122,7 @@ func (c *Client) CompareVersions(ctx context.Context, objectType, name string, v
 //
 // Key discovery: classes use /includes/{type}/versions (not /source/main/versions).
 // Programs and other source objects use /source/main/versions.
-// Interfaces also use /includes/main/versions (same pattern as classes).
+// Interfaces have no includes: /source/main/versions (7.50 answers 404 on /includes/main).
 func (c *Client) resolveRevisionURL(objectType, name string, opts *GetSourceOptions) (string, error) {
 	encodedName := url.PathEscape(name)
 
@@ -137,8 +137,7 @@ func (c *Client) resolveRevisionURL(objectType, name string, opts *GetSourceOpti
 		// Classes always use /includes/{type}/versions — even for main
 		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s/includes/%s/versions", encodedName, include), nil
 	case "INTF":
-		// Interfaces use the same /includes/main/versions pattern as classes
-		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s/includes/main/versions", encodedName), nil
+		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s/source/main/versions", encodedName), nil
 	case "FUNC":
 		if opts.Parent == "" {
 			return "", fmt.Errorf("parent (function group name) is required for FUNC type")
