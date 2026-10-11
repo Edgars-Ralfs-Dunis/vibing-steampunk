@@ -81,10 +81,12 @@ func TestFieldWhereUsed(t *testing.T) {
 	if isErr {
 		t.Fatalf("refused: %s", text)
 	}
+	// Every data preview read asks one row more than it keeps (GetTableContents'
+	// probe row), so TMDIR and TRDIR go out at their exact bound plus one.
 	want := []string{
 		`WBCROSSGT 1001: SELECT INCLUDE FROM WBCROSSGT WHERE OTYPE = 'TY' AND NAME = 'T549A\TY:CALCR'`,
-		`TMDIR 3: SELECT CLASSNAME, METHODINDX, METHODNAME FROM TMDIR WHERE CLASSNAME IN ( 'ZCL_DEMO' ) AND METHODINDX IN ( 10, 11, 36 )`,
-		`TRDIR 4: SELECT NAME, SUBC FROM TRDIR WHERE NAME IN ( 'SAPLZFG', 'ZGONE', 'ZREPORT', 'ZREPORT_TOP' )`,
+		`TMDIR 4: SELECT CLASSNAME, METHODINDX, METHODNAME FROM TMDIR WHERE CLASSNAME IN ( 'ZCL_DEMO' ) AND METHODINDX IN ( 10, 11, 36 )`,
+		`TRDIR 5: SELECT NAME, SUBC FROM TRDIR WHERE NAME IN ( 'SAPLZFG', 'ZGONE', 'ZREPORT', 'ZREPORT_TOP' )`,
 	}
 	if strings.Join(*sent, "\n") != strings.Join(want, "\n") {
 		t.Errorf("statements sent:\n%s\nwant:\n%s", strings.Join(*sent, "\n"), strings.Join(want, "\n"))

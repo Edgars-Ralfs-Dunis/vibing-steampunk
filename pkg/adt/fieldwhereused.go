@@ -72,21 +72,21 @@ func (c *Client) FieldWhereUsed(ctx context.Context, table, field string, maxRow
 	if maxRows <= 0 {
 		maxRows = 1000
 	}
-	// Above UnlimitedRows the data preview silently returns ~100 rows, which would read as complete.
+	// Above UnlimitedRows the data preview silently returns ~100 rows, which
+	// would read as complete. GetTableContents asks for one row more than
+	// maxRows, so this keeps rowNumber at UnlimitedRows at most.
 	maxRows = min(maxRows, UnlimitedRows-1)
 
-	// The backslash is literal in ABAP SQL.
-	index, err := c.GetTableContents(ctx, "WBCROSSGT", maxRows+1,
+	// The backslash is literal in ABAP SQL. GetTableContents keeps maxRows
+	// rows and sets Truncated when SAP had more.
+	index, err := c.GetTableContents(ctx, "WBCROSSGT", maxRows,
 		fmt.Sprintf(`SELECT INCLUDE FROM WBCROSSGT WHERE OTYPE = 'TY' AND NAME = '%s\TY:%s'`, table, field))
 	if err != nil {
 		return nil, fmt.Errorf("WBCROSSGT: %w", err)
 	}
-	res := &FieldWhereUsedResult{Table: table, Field: field,
+	res := &FieldWhereUsedResult{Table: table, Field: field, Truncated: index.Truncated,
 		Classes: []FieldUsageClass{}, Programs: []string{}, Includes: []string{}, Other: []FieldUsageOther{}}
 	rows := index.Rows
-	if len(rows) > maxRows {
-		rows, res.Truncated = rows[:maxRows], true
-	}
 	res.IndexRows = len(rows)
 
 	methods := map[string]map[int]string{} // class -> method index -> include part
