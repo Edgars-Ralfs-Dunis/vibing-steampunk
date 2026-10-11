@@ -1,6 +1,8 @@
 package adt
 
 import (
+	"context"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -429,5 +431,28 @@ func TestSafetyConfig_CheckTransport_ReadOnly(t *testing.T) {
 	s.ReadOnly = false
 	if err := s.CheckTransport("A4HK900001", "ReleaseTransport", true); err != nil {
 		t.Errorf("ReleaseTransport without --read-only: %v", err)
+	}
+}
+
+// A statement in GetTableContents' body runs as free SQL, so --block-free-sql
+// refuses it before anything is sent; a plain table read stays allowed (50b5c69).
+func TestGetTableContents_BlockFreeSQL(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(http.ResponseWriter, *http.Request) {}, WithBlockFreeSQL())
+	ctx := context.Background()
+
+	_, err := client.GetTableContents(ctx, "T000", 1, "SELECT spras, laspez FROM t002 WHERE spras = 'E'")
+	if err == nil || !strings.Contains(err.Error(), "blocked by safety configuration") {
+		t.Fatalf("sql_query under --block-free-sql: want a safety refusal, got %v", err)
+	}
+	if calls := rec.snapshot(); len(calls) != 0 {
+		t.Fatalf("refused statement still reached SAP:\n%v", calls)
+	}
+
+	if _, err := client.GetTableContents(ctx, "T000", 1, ""); err != nil && strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("plain table read refused: %v", err)
+	}
+	if indexOfCall(rec.snapshot(), func(c wireCall) bool { return strings.Contains(c.path, "datapreview") }) < 0 {
+		t.Fatalf("plain table read sent no data preview; trace:\n%v", rec.snapshot())
 	}
 }
