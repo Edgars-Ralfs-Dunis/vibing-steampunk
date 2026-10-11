@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Client is the main ADT API client.
@@ -1242,6 +1243,8 @@ func (c *Client) GetStructure(ctx context.Context, structName string) (string, e
 type TableContentsResult struct {
 	Columns []TableColumn
 	Rows    []map[string]interface{}
+	// Truncated says SAP had more rows than were asked for.
+	Truncated bool `json:"-"`
 }
 
 // TableColumn represents a column in table contents.
@@ -1261,9 +1264,13 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 	if maxRows <= 0 {
 		maxRows = 100
 	}
+	// Above about 100,000 the ddic preview silently answers ~100 rows; the
+	// probe row below still says when the clamp cut the answer.
+	maxRows = min(maxRows, UnlimitedRows)
 
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	// One row more than wanted tells a capped answer from a complete one.
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 	params.Set("ddicEntityName", tableName)
 
 	opts := &RequestOptions{
@@ -1274,7 +1281,14 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 
 	// Add SQL filter as request body if provided
 	if sqlFilter != "" {
-		opts.Body = []byte(sqlFilter)
+		body, err := sqlBody(sqlFilter)
+		if err != nil {
+			return nil, err
+		}
+		// ddic wraps the text at blanks itself and only that is proven on
+		// 7.50, so the wrap goes out as blanks: what it fixes is the word
+		// over 255 characters that ddic cuts in two.
+		opts.Body = []byte(strings.ReplaceAll(body, "\n", " "))
 		opts.ContentType = "text/plain"
 	}
 
@@ -1283,7 +1297,7 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 		return nil, fmt.Errorf("getting table contents: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // RunQuery executes a freestyle SQL query against the SAP database.
@@ -1301,21 +1315,26 @@ func (c *Client) RunQuery(ctx context.Context, sqlQuery string, maxRows int) (*T
 		maxRows = 100
 	}
 
+	body, err := sqlBody(sqlQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/datapreview/freestyle", &RequestOptions{
 		Method:      http.MethodPost,
 		Query:       params,
 		Accept:      "application/*",
-		Body:        []byte(wrapSQL(sqlQuery)),
+		Body:        []byte(body),
 		ContentType: "text/plain",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("running query: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // wrapSQL keeps every line of a statement under the data preview's limit.
@@ -1329,9 +1348,20 @@ func wrapSQL(query string) string {
 	lineLen := 0
 	inQuote := false
 	start := 0
-	emit := func(word string) {
+	var emit func(word string)
+	emit = func(word string) {
 		if word == "" {
 			return
+		}
+		// A word longer than a line -- an IN list written without blanks --
+		// is broken after its commas, which ABAP SQL reads the same way.
+		if len(word) > limit {
+			if parts := splitAtCommas(word); len(parts) > 1 {
+				for _, p := range parts {
+					emit(p)
+				}
+				return
+			}
 		}
 		if lineLen > 0 && lineLen+1+len(word) > limit {
 			out.WriteByte('\n')
@@ -1363,8 +1393,45 @@ func wrapSQL(query string) string {
 	return out.String()
 }
 
-// parseTableContents parses the XML response for table contents.
-func parseTableContents(data []byte) (*TableContentsResult, error) {
+// splitAtCommas cuts a word after each comma outside quotes.
+func splitAtCommas(word string) []string {
+	var parts []string
+	in := false
+	start := 0
+	for i := 0; i < len(word); i++ {
+		switch word[i] {
+		case '\'':
+			in = !in
+		case ',':
+			if !in {
+				parts = append(parts, word[start:i+1])
+				start = i + 1
+			}
+		}
+	}
+	if start < len(word) {
+		parts = append(parts, word[start:])
+	}
+	return parts
+}
+
+// sqlBody is a statement wrapped for the data preview. One that still has a
+// line over 255 characters is refused here, because SAP cuts it without an
+// error: freestyle drops the tail of the line, and ddic splits the word, so a
+// literal loses half and the count comes back short.
+func sqlBody(query string) (string, error) {
+	w := wrapSQL(query)
+	for n, line := range strings.Split(w, "\n") {
+		if l := utf8.RuneCountInString(line); l > 255 {
+			return "", fmt.Errorf("SQL not sent: line %d is %d characters after wrapping, and SAP's data preview cuts a line at 255 characters without an error; add blanks or line breaks between the words of %.40q", n+1, l, line)
+		}
+	}
+	return w, nil
+}
+
+// parseTableContents parses the XML response for table contents, keeping at
+// most limit rows. 7.50's ddic preview returns one row more than rowNumber.
+func parseTableContents(data []byte, limit int) (*TableContentsResult, error) {
 	// The ADT table data response is complex XML
 	// We'll parse it into a generic structure
 	type tableData struct {
@@ -1416,6 +1483,9 @@ func parseTableContents(data []byte) (*TableContentsResult, error) {
 			}
 		}
 		result.Rows = append(result.Rows, row)
+	}
+	if len(result.Rows) > limit {
+		result.Rows, result.Truncated = result.Rows[:limit], true
 	}
 
 	return result, nil
