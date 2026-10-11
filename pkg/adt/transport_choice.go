@@ -241,7 +241,7 @@ func (c *Client) transportHoldsPackage(ctx context.Context, number, pkg string) 
 	if len(names) > 200 {
 		names = names[:200]
 	}
-	res, err := c.RunQuery(ctx, fmt.Sprintf("SELECT COUNT(*) AS n FROM tadir WHERE devclass = '%s' AND obj_name IN (%s)", sqlQuote(pkg), strings.Join(names, ",")), 1)
+	res, err := c.RunQuery(ctx, fmt.Sprintf("SELECT COUNT(*) AS n FROM tadir WHERE devclass = '%s' AND obj_name IN (%s)", sqlQuote(pkg), strings.Join(names, ", ")), 1)
 	if err != nil || res == nil || len(res.Rows) == 0 {
 		return false
 	}

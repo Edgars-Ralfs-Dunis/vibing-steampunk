@@ -56,7 +56,8 @@ func (s *Server) handleSearchObject(ctx context.Context, request mcp.CallToolReq
 	}
 
 	maxResults := defaultRows
-	if mr, ok := request.GetArguments()["maxResults"].(float64); ok && mr > 0 {
+	// max_results is the name the truncation note below tells callers to use.
+	if mr, ok := firstNumber(request.GetArguments(), "maxResults", "max_results"); ok && mr > 0 {
 		maxResults = int(mr)
 	}
 

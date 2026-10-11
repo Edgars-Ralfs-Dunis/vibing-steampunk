@@ -169,6 +169,9 @@ func (s *SafetyConfig) IsOperationAllowed(op OperationType) bool {
 // CheckOperation returns an error if the operation is not allowed
 func (s *SafetyConfig) CheckOperation(op OperationType, opName string) error {
 	if !s.IsOperationAllowed(op) {
+		if op == OpTransport && !s.EnableTransports {
+			return fmt.Errorf("transport operation '%s' is blocked: transports not enabled (use --enable-transports or SAP_ENABLE_TRANSPORTS=true)", opName)
+		}
 		return fmt.Errorf("operation '%s' (type %c) is blocked by safety configuration", opName, op)
 	}
 	return nil

@@ -108,6 +108,46 @@ type UsageReference struct {
 // objectURL is the URL of the object (e.g., "/sap/bc/adt/oo/classes/ZCL_TEST")
 // line and column are optional - if provided, find references to symbol at position
 func (c *Client) FindReferences(ctx context.Context, objectURL string, line int, column int) ([]UsageReference, error) {
+	refs, _, err := c.FindReferencesResolved(ctx, objectURL, line, column)
+	return refs, err
+}
+
+// FindReferencesResolved is FindReferences that also returns the address that
+// answered. A 7.50 system answers a DDIC table's own address with a 500 ("Error
+// while converting object references") and the same table under the generic
+// workbench address with the right list. The retry lives here, not in one
+// handler, so GetCallersOf, the call graph and dump impact all get it.
+func (c *Client) FindReferencesResolved(ctx context.Context, objectURL string, line int, column int) ([]UsageReference, string, error) {
+	refs, err := c.usageReferences(ctx, objectURL, line, column)
+	if err == nil {
+		return refs, objectURL, nil
+	}
+	workbench, ok := workbenchAddress(objectURL)
+	if !ok {
+		return nil, objectURL, err
+	}
+	refs, retryErr := c.usageReferences(ctx, workbench, line, column)
+	if retryErr != nil {
+		return nil, objectURL, fmt.Errorf("%w; retried as %s: %v", err, workbench, retryErr)
+	}
+	return refs, workbench, nil
+}
+
+// ddicAddress matches the ADT address of a DDIC table or structure.
+var ddicAddress = regexp.MustCompile(`(?i)^/sap/bc/adt/ddic/(tables|structures)/([^/?#]+)$`)
+
+// workbenchAddress gives the generic workbench address for a DDIC table or
+// structure address, the form the where-used resource answers on every release.
+func workbenchAddress(objectURL string) (string, bool) {
+	m := ddicAddress.FindStringSubmatch(objectURL)
+	if m == nil {
+		return "", false
+	}
+	kind := map[string]string{"tables": "tabldt", "structures": "tablds"}[strings.ToLower(m[1])]
+	return "/sap/bc/adt/vit/wb/object_type/" + kind + "/object_name/" + strings.ToUpper(m[2]), true
+}
+
+func (c *Client) usageReferences(ctx context.Context, objectURL string, line int, column int) ([]UsageReference, error) {
 	uri := objectURL
 	if line > 0 && column > 0 {
 		uri = fmt.Sprintf("%s#start=%d,%d", objectURL, line, column)

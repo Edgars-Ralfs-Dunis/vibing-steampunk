@@ -83,6 +83,11 @@ func (c *Client) CorrelateDump(ctx context.Context, dump Dump, tolerance time.Du
 	// that never existed — so a system where free SQL is blocked still says so
 	// instead of pretending.
 	callees := c.calleesOfStack(ctx, stack)
+	// BALHDR's ALDATE/ALTIME are the server's clock and dump.At is UTC. The
+	// id's stamp is that same server clock, exact for this dump's own date.
+	if local := DumpTimeFromID(dump.ID); !local.IsZero() {
+		dump.At = local
+	}
 	return c.correlateWith(ctx, dump, stack, callees, tolerance, limit)
 }
 

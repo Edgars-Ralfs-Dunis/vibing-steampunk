@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -308,19 +309,15 @@ func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToo
 			contents.Rows = nil
 		} else {
 			contents.Rows = contents.Rows[offset:]
-			if len(contents.Rows) > maxRows {
-				contents.Rows = contents.Rows[:maxRows]
-			}
 		}
 	}
 
 	// Strip rows for columns_only
 	if columnsOnly && contents != nil {
-		contents.Rows = nil
+		contents.Rows, contents.Truncated = nil, false
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return tableContentsResult(contents), nil
 }
 
 func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -349,8 +346,20 @@ func (s *Server) handleRunQuery(ctx context.Context, request mcp.CallToolRequest
 		return newToolResultError(fmt.Sprintf("Failed to run query: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(contents, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return tableContentsResult(contents), nil
+}
+
+// tableContentsResult is a data preview answer, plus the sentence saying so
+// when SAP had more rows than it shows.
+func tableContentsResult(contents *adt.TableContentsResult) *mcp.CallToolResult {
+	var out any = contents
+	if contents != nil && contents.Truncated {
+		out = struct {
+			*adt.TableContentsResult
+			Truncated string `json:"truncated"`
+		}{contents, truncationNoteUnknownTotal(len(contents.Rows), "max_rows", "narrow the WHERE clause, or count with COUNT( * )")}
+	}
+	return newToolResultJSON(out)
 }
 
 func (s *Server) handleGetCDSDependencies(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -423,6 +432,23 @@ func (s *Server) handleGetPackage(ctx context.Context, request mcp.CallToolReque
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get package: %v", err)), nil
 	}
+	if len(pkg.Objects) == 0 && len(pkg.SubPackages) == 0 {
+		// SAP answers a package that does not exist with the same empty tree as
+		// an empty one; only a direct probe tells them apart.
+		if exists, err := s.adtClient.PackageExists(ctx, packageName); err == nil && !exists {
+			return newToolResultError(fmt.Sprintf("Package %s does not exist", pkg.Name)), nil
+		}
+		// The nodestructure is the SE80 tree, which on 7.50 does not list every
+		// TADIR type (SICF, SUSC, ...). An empty answer is checked against TADIR.
+		q := "SELECT object, obj_name FROM tadir WHERE devclass = '" + sqlLiteral(packageName) + "' AND object <> 'DEVC'"
+		if rows, qerr := s.adtClient.RunQuery(ctx, q, 50); qerr == nil && len(rows.Rows) > 0 {
+			var names []string
+			for _, r := range rows.Rows {
+				names = append(names, fmt.Sprintf("%v %v", r["OBJECT"], r["OBJ_NAME"]))
+			}
+			pkg.Note = "the package tree lists no objects, but TADIR has these (types the tree does not show): " + strings.Join(names, ", ")
+		}
+	}
 
 	result, _ := json.MarshalIndent(pkg, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil
@@ -439,8 +465,7 @@ func (s *Server) handleGetMessages(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError(fmt.Sprintf("Failed to get message class: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(mc, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(mc), nil
 }
 
 func (s *Server) handleGetTransaction(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

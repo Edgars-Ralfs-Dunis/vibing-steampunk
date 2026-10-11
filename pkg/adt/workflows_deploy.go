@@ -82,6 +82,24 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}, nil
 	}
 
+	// From here on the object exists, so every failure says so, and where it
+	// was left: an answer of created:false sent every retry down a path that
+	// assumed nothing was there.
+	// Once locked, the lock's request is where it sits, even when a request
+	// named by the caller was refused with "already locked in request X".
+	lockedIn := ""
+	failed := func(r *DeployResult) (*DeployResult, error) {
+		r.Created, r.Transport, r.TransportNote = true, transport, trNote
+		if lockedIn != "" {
+			r.Transport = lockedIn
+		}
+		r.Message += fmt.Sprintf("; %s %s was created and is left in package %s", info.ObjectType, info.ObjectName, packageName)
+		if r.Transport != "" {
+			r.Message += " on request " + r.Transport
+		}
+		return r, nil
+	}
+
 	// 4. Build object URL
 	objectURL, err := c.buildObjectURLWithParent(info.ObjectType, info.ObjectName, info.ParentName)
 	if err != nil {
@@ -101,7 +119,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 	// the deploy path did not, which is where the 423 reports came from.
 	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 	if err != nil {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:   filePath,
 			ObjectURL:  objectURL,
 			ObjectName: info.ObjectName,
@@ -109,7 +127,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:    false,
 			Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
 			Message:    fmt.Sprintf("Object created but syntax check failed: %v", err),
-		}, nil
+		})
 	}
 
 	// Only hard errors block the write. Warnings and info (e.g. "the regex
@@ -126,7 +144,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		for i, e := range hardErrors {
 			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
 		}
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:     filePath,
 			ObjectURL:    objectURL,
 			ObjectName:   info.ObjectName,
@@ -134,13 +152,13 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:      false,
 			SyntaxErrors: errorMsgs,
 			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(hardErrors)),
-		}, nil
+		})
 	}
 
 	// 6. Lock object
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:   filePath,
 			ObjectURL:  objectURL,
 			ObjectName: info.ObjectName,
@@ -148,7 +166,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:    false,
 			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
 			Message:    fmt.Sprintf("Object created but failed to lock: %v", err),
-		}, nil
+		})
 	}
 
 	// Ensure unlock on any error
@@ -159,6 +177,21 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}
 	}()
 
+	// SAP records a new object with no request named on one it generates; the
+	// lock reports it, and the write must name it (as UpdateFromFile does).
+	lockedIn = lockResult.CorrNr
+	if transport, err = c.resolveWriteTransport(transport, lockResult.CorrNr, "CreateFromFile"); err != nil {
+		return failed(&DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("transportable-edit check failed: %v", err)},
+			Message:    fmt.Sprintf("Object created but transportable-edit check failed: %v", err),
+		})
+	}
+
 	// 7. Write source (need source URL, not object URL)
 	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName, info.ParentName)
 	if err != nil {
@@ -166,7 +199,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 	}
 	err = c.UpdateSource(ctx, sourceURL, source, lockResult.LockHandle, transport)
 	if err != nil {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:   filePath,
 			ObjectURL:  objectURL,
 			ObjectName: info.ObjectName,
@@ -174,14 +207,14 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:    false,
 			Errors:     []string{fmt.Sprintf("write source failed: %v", err)},
 			Message:    fmt.Sprintf("Object created but failed to write source: %v", err),
-		}, nil
+		})
 	}
 
 	// 8. Unlock
 	err = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
 	unlocked = true
 	if err != nil {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:   filePath,
 			ObjectURL:  objectURL,
 			ObjectName: info.ObjectName,
@@ -189,13 +222,13 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:    false,
 			Errors:     []string{fmt.Sprintf("unlock failed: %v", err)},
 			Message:    fmt.Sprintf("Source written but failed to unlock: %v", err),
-		}, nil
+		})
 	}
 
 	// 9. Activate
 	activation, err := c.Activate(ctx, objectURL, info.ObjectName)
 	if err != nil {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:   filePath,
 			ObjectURL:  objectURL,
 			ObjectName: info.ObjectName,
@@ -203,7 +236,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:    false,
 			Errors:     []string{fmt.Sprintf("activation failed: %v", err)},
 			Message:    fmt.Sprintf("Source written but activation failed: %v", err),
-		}, nil
+		})
 	}
 	// A refusal is not an err: SAP answers 200 and puts the reason in the
 	// checklist. Reading only err reported "Successfully created and activated"
@@ -211,7 +244,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 	// of it, but only the source it was given, and activation is the step that
 	// has the last word.
 	if !activation.Success {
-		return &DeployResult{
+		return failed(&DeployResult{
 			FilePath:     filePath,
 			ObjectURL:    objectURL,
 			ObjectName:   info.ObjectName,
@@ -219,7 +252,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Success:      false,
 			SyntaxErrors: activation.ProblemLines(),
 			Message:      fmt.Sprintf("Source written but %s %s did not activate", info.ObjectType, info.ObjectName),
-		}, nil
+		})
 	}
 
 	return &DeployResult{
@@ -541,6 +574,9 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 				}, nil
 			}
 			// Regular object - create it
+			if packageName == "" {
+				return nil, fmt.Errorf("%s %s does not exist yet: package_name is required to create it", info.ObjectType, info.ObjectName)
+			}
 			return c.CreateFromFile(ctx, filePath, packageName, transport)
 		}
 		// Authentication, network and server failures are inconclusive. Do not

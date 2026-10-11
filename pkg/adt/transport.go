@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // --- Transport Types ---
@@ -86,10 +87,7 @@ func (c *Client) GetUserTransports(ctx context.Context, userName string) (*UserT
 }
 
 // userTransportsViaSQL groups the E070/E07T fallback rows the way the ADT tree
-// would have. A failing query is already swallowed inside listTransportsViaSQL;
-// what comes back as an error here is a caller mistake — no user name at all,
-// or one that is not a user name — and that is worth saying out loud rather
-// than answering with an empty list a second time.
+// would have.
 func (c *Client) userTransportsViaSQL(ctx context.Context, user string) (*UserTransports, error) {
 	rows, err := c.listTransportsViaSQL(ctx, user)
 	if err != nil {
@@ -175,8 +173,8 @@ func parseUserTransports(data []byte) (*UserTransports, error) {
 // GetTransportInfo retrieves transport information for an object.
 // Returns available transports and whether the object is locked.
 func (c *Client) GetTransportInfo(ctx context.Context, objectURL string, devClass string) (*TransportInfo, error) {
-	// Safety check
-	if err := c.checkSafety(OpTransport, "GetTransportInfo"); err != nil {
+	// A read: allowed whenever transportable edits are, as for ListTransports.
+	if err := c.config.Safety.CheckTransport("", "GetTransportInfo", false); err != nil {
 		return nil, err
 	}
 
@@ -408,7 +406,7 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 	if err != nil {
 		return nil, err
 	}
-	return FlattenTransports(res.Transports), nil
+	return res.Flat(), nil
 }
 
 // as4userPredicate builds the E070~AS4USER condition for the fallback query,
@@ -458,14 +456,15 @@ func as4userPredicate(user string) (string, error) {
 // and customizing requests. Used as the last fallback when the organizer tree
 // answers nothing (common on sandbox systems without transport routes).
 func (c *Client) listTransportsViaSQL(ctx context.Context, user string) ([]TransportSummary, error) {
-	return c.listTransportsViaSQLQuery(ctx, user, "KW", "D")
+	return c.listTransportsViaSQLQuery(ctx, user, "KW", "D", "", "")
 }
 
 // listTransportsViaSQLQuery is listTransportsViaSQL with the request types
 // (letters of K, W, T) and statuses (letters of D, R) spelled out. Request
 // texts come in the session language, the way the organizer tree delivers
-// them, instead of English only.
-func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, statuses string) ([]TransportSummary, error) {
+// them, instead of English only. Released rows are bounded by from..to
+// (YYYYMMDD), the last 14 days when both are empty, as the organizer does.
+func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, statuses, from, to string) ([]TransportSummary, error) {
 	// '*' is the wildcard Eclipse ADT uses for "every user". It was being
 	// compared literally (AS4USER = '*'), which no row matches, so the wildcard
 	// answered "no transports found" instead of everyone's (#140).
@@ -483,6 +482,13 @@ func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, sta
 	if predicate != "" {
 		conditions = append([]string{predicate}, conditions...)
 	}
+	if strings.Contains(statuses, "R") {
+		if from == "" {
+			now := time.Now()
+			from, to = now.AddDate(0, 0, -14).Format("20060102"), now.Format("20060102")
+		}
+		conditions = append(conditions, "( e070~TRSTATUS IN ('D', 'L') OR e070~AS4DATE BETWEEN '"+from+"' AND '"+to+"' )")
+	}
 
 	query := `SELECT e070~TRKORR, e070~TRFUNCTION, e070~TRSTATUS, e070~TARSYSTEM,
 		e070~AS4USER, e070~AS4DATE, e070~AS4TIME, e07t~AS4TEXT
@@ -491,10 +497,9 @@ func (c *Client) listTransportsViaSQLQuery(ctx context.Context, user, types, sta
 		WHERE ` + strings.Join(conditions, "\n\t\tAND ") + `
 		ORDER BY e070~TRKORR DESCENDING`
 
-	result, err := c.RunQuery(ctx, query, 100)
+	result, err := c.RunQuery(ctx, query, ResolveRowLimit(true, 0))
 	if err != nil {
-		// If SQL query fails, return empty list (not an error)
-		return []TransportSummary{}, nil
+		return nil, fmt.Errorf("reading E070/E07T: %w", err)
 	}
 
 	var transports []TransportSummary
@@ -622,10 +627,10 @@ func (c *Client) GetTransport(ctx context.Context, number string) (*TransportDet
 		return nil, fmt.Errorf("getting transport %s: %w", number, err)
 	}
 
-	return parseTransportDetail(resp.Body)
+	return parseTransportDetail(resp.Body, strings.ToUpper(number))
 }
 
-func parseTransportDetail(data []byte) (*TransportDetails, error) {
+func parseTransportDetail(data []byte, number string) (*TransportDetails, error) {
 	// Strip namespace prefixes
 	xmlStr := string(data)
 	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
@@ -676,7 +681,7 @@ func parseTransportDetail(data []byte) (*TransportDetails, error) {
 	}
 
 	if resp.Request == nil {
-		return nil, fmt.Errorf("transport not found in response")
+		return transportDetailFromTree(data, number)
 	}
 
 	req := resp.Request
@@ -744,6 +749,73 @@ func parseTransportDetail(data []byte) (*TransportDetails, error) {
 	}
 
 	return t, nil
+}
+
+// transportDetailFromTree picks the request out of a document that holds
+// several: 7.50 answers GET /cts/transportrequests/<N> with the user's whole
+// organizer tree (workbench > modifiable > request), not with the one request.
+func transportDetailFromTree(data []byte, number string) (*TransportDetails, error) {
+	requests, err := parseCTSRequests(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range requests {
+		if !strings.EqualFold(r.Number, number) {
+			continue
+		}
+		r.fillFromStructure()
+		t := &TransportDetails{
+			TransportSummary: TransportSummary{
+				Number:      r.Number,
+				Owner:       r.Owner,
+				Description: r.Desc,
+				Type:        r.Type,
+				Status:      r.Status,
+				StatusText:  r.StatusText,
+				Target:      r.Target,
+				TargetDesc:  r.TargetDesc,
+				ChangedAt:   r.LastChanged,
+				Client:      r.Client,
+				Bucket:      r.Bucket,
+				Project:     r.Project,
+			},
+			Objects: ctsObjectsV2(r.Objects),
+		}
+		for _, task := range r.Tasks {
+			t.Tasks = append(t.Tasks, TransportTaskV2{
+				Number:      task.Number,
+				Parent:      task.Parent,
+				Owner:       task.Owner,
+				Description: task.Desc,
+				Type:        task.Type,
+				Status:      task.Status,
+				StatusText:  task.StatusText,
+				Objects:     ctsObjectsV2(task.Objects),
+			})
+		}
+		return t, nil
+	}
+
+	var root ctsNode
+	_ = xml.Unmarshal(data, &root)
+	head := data
+	if len(head) > 300 {
+		head = head[:300]
+	}
+	return nil, fmt.Errorf("transport %s not found in the response: root element <%s> holds %d other requests "+
+		"(7.50 answers with the logon user's organizer tree, which lacks other users' requests and ones released "+
+		"over 14 days ago; E070/E071 have them); body starts: %s",
+		number, root.XMLName.Local, len(requests), head)
+}
+
+func ctsObjectsV2(objects []ctsObject) []TransportObjectV2 {
+	var out []TransportObjectV2
+	for _, o := range objects {
+		pos := 0
+		fmt.Sscanf(o.Position, "%d", &pos)
+		out = append(out, TransportObjectV2{PgmID: o.PgmID, Type: o.Type, Name: o.Name, WBType: o.WBType, Info: o.Info, Position: pos})
+	}
+	return out
 }
 
 // CreateTransportV2 creates a new transport request with options

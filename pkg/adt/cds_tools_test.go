@@ -295,3 +295,27 @@ func TestClient_GetCDSElementInfo_ReadOnly(t *testing.T) {
 		t.Errorf("GetCDSElementInfo should succeed in read-only mode (OpRead): %v", err)
 	}
 }
+
+// 7.50 sets isResult only on leaf rows; a consumer can arrive as an
+// isResult="false" row carrying usageInformation="gradeDirect".
+func TestParseCDSImpactAnalysis_GradeDirectWithoutIsResult(t *testing.T) {
+	xmlResponse := `<?xml version="1.0" encoding="UTF-8"?>
+<usageReferences:usageReferenceResult xmlns:usageReferences="http://www.sap.com/adt/ris/usageReferences" xmlns:adtcore="http://www.sap.com/adt/core">
+  <usageReferences:referencedObjects>
+    <usageReferences:referencedObject usageReferences:uri="/sap/bc/adt/packages/ztest_pkg" usageReferences:isResult="false">
+      <adtcore:adtObject adtcore:uri="/sap/bc/adt/packages/ztest_pkg" adtcore:type="DEVC/K" adtcore:name="ZTEST_PKG"/>
+    </usageReferences:referencedObject>
+    <usageReferences:referencedObject usageReferences:uri="/sap/bc/adt/programs/programs/zreport" usageReferences:isResult="false" usageReferences:usageInformation="gradeDirect,includeProductive">
+      <adtcore:adtObject adtcore:uri="/sap/bc/adt/programs/programs/zreport" adtcore:type="PROG/P" adtcore:name="ZREPORT"/>
+    </usageReferences:referencedObject>
+  </usageReferences:referencedObjects>
+</usageReferences:usageReferenceResult>`
+
+	result, err := parseCDSImpactAnalysis([]byte(xmlResponse), "ZBASE_VIEW")
+	if err != nil {
+		t.Fatalf("parseCDSImpactAnalysis failed: %v", err)
+	}
+	if result.TotalCount != 1 || result.ImpactedObjects[0].Name != "ZREPORT" {
+		t.Fatalf("the gradeDirect report is a consumer, the package is not: %+v", result.ImpactedObjects)
+	}
+}

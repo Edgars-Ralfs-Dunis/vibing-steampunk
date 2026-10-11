@@ -239,6 +239,10 @@ func (p *FeatureProber) probeHANA(ctx context.Context) (bool, string, error) {
 		return true, fmt.Sprintf("HANA detected: %s", info.DatabaseSystem), nil
 	}
 
+	if dbSystem == "" {
+		// CVERS cannot see the database of a Suite on HANA system.
+		return false, "database not identified (CVERS names no HANA component); force with --feature-hana on if this is HANA", nil
+	}
 	return false, fmt.Sprintf("non-HANA database: %s", info.DatabaseSystem), nil
 }
 
@@ -326,22 +330,15 @@ func (p *FeatureProber) probeAMDP(ctx context.Context) (bool, string, error) {
 
 // probeUI5 checks if UI5/Fiori BSP management is available
 func (p *FeatureProber) probeUI5(ctx context.Context) (bool, string, error) {
-	// Check if UI5 repository endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/filestore/ui5-bsp", &RequestOptions{
-		Method: http.MethodOptions,
-	})
-	if err != nil {
+	// Ask the objects collection the UI5 tools use. An OPTIONS on the bare
+	// /filestore/ui5-bsp root answers 404 on 7.50 where the tools work.
+	if _, _, _, err := p.client.UI5ListApps(ctx, "", 1); err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return false, "UI5 BSP endpoint not available", nil
 		}
 		return false, "", err
 	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "UI5 BSP repository available", nil
-	}
-
-	return false, "UI5 BSP not responding", nil
+	return true, "UI5 BSP repository available", nil
 }
 
 // probeTransport checks if CTS transport management is available

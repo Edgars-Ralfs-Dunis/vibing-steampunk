@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -117,22 +116,11 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 
 	objectTypes := referenceTypeFilter(request.GetArguments()["object_types"])
 
-	usedURL := objectURL
-	results, err := s.adtClient.FindReferences(ctx, objectURL, line, column)
+	// A DDIC table that 7.50 refuses under its own address is retried under
+	// the workbench one inside the client; usedURL says which answered.
+	results, usedURL, err := s.adtClient.FindReferencesResolved(ctx, objectURL, line, column)
 	if err != nil {
-		// A 7.50 system answers a DDIC table's own address with a 500 ("Error
-		// while converting object references") and the same table under the
-		// generic workbench address with the right list. Retry once, and say so.
-		workbench, ok := workbenchAddress(objectURL)
-		if !ok {
-			return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
-		}
-		retried, retryErr := s.adtClient.FindReferences(ctx, workbench, line, column)
-		if retryErr != nil {
-			return newToolResultError(fmt.Sprintf("FindReferences failed: %v; retried as %s: %v",
-				err, workbench, retryErr)), nil
-		}
-		results, usedURL = retried, workbench
+		return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
 	}
 
 	// The where-used response is a tree flattened into a list, and most of it is
@@ -148,10 +136,14 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	// The type filter runs before the cap. A table is used by structures as much
 	// as by code, and on one system the first fifty of T549A's 393 references
 	// were all structures: capped first, a question about code found none.
+	//
+	// A 7.50 system sets isResult only on leaf rows (includes, modules): class
+	// and report hits arrive with isResult false and usageInformation
+	// gradeDirect, the mark GetCallersOf reads (exposedCallers). Both count.
 	hits := make([]adt.UsageReference, 0, len(results))
 	filteredOut := 0
 	for _, r := range results {
-		if !r.IsResult {
+		if !r.IsResult && !strings.Contains(r.UsageInformation, "gradeDirect") {
 			continue
 		}
 		if !referenceTypeMatches(r.Type, objectTypes) {
@@ -165,7 +157,7 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 		"object_url":  objectURL,
 		"total":       len(hits),
 		"rows_read":   len(results),
-		"scaffolding": len(results) - len(hits),
+		"scaffolding": len(results) - len(hits) - filteredOut,
 		"source":      "the where-used list behind SE84 (/sap/bc/adt/repository/informationsystem/usageReferences)",
 	}
 	if line > 0 || column > 0 {
@@ -185,7 +177,7 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	} else {
 		answer["references"] = hits
 	}
-	if len(hits) == 0 && len(results) > 0 {
+	if len(hits) == 0 && filteredOut == 0 && len(results) > 0 {
 		// Every row was scaffolding. That is an answer, and it is not the same
 		// as the resource returning nothing.
 		answer["note"] = "the resource answered with containers only — packages and groups, no references. " +
@@ -193,6 +185,21 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	}
 
 	output, _ := json.MarshalIndent(answer, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleFieldWhereUsed(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	table, _ := request.GetArguments()["table"].(string)
+	field, _ := request.GetArguments()["field"].(string)
+	maxResults := 0
+	if m, ok := request.GetArguments()["max_results"].(float64); ok {
+		maxResults = int(m)
+	}
+	result, err := s.adtClient.FieldWhereUsed(ctx, table, field, maxResults)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("FieldWhereUsed failed: %v", err)), nil
+	}
+	output, _ := json.Marshal(result)
 	return mcp.NewToolResultText(string(output)), nil
 }
 
@@ -341,15 +348,17 @@ func formatClassComponents(comp *adt.ClassComponent) string {
 	types := []adt.ClassComponent{}
 	others := []adt.ClassComponent{}
 
+	// objectstructure sends the ADT codes (CLAS/OM, CLAS/OA, CLAS/OO, CLAS/OT),
+	// as classifyMemberKind in pkg/graph reads them.
 	for _, c := range comp.Components {
 		switch {
-		case strings.Contains(c.Type, "METH"):
+		case c.Type == "CLAS/OM" || strings.Contains(c.Type, "METH"):
 			methods = append(methods, c)
-		case strings.Contains(c.Type, "DATA") || strings.Contains(c.Type, "ATTR"):
+		case c.Type == "CLAS/OA" || strings.Contains(c.Type, "DATA") || strings.Contains(c.Type, "ATTR"):
 			attributes = append(attributes, c)
-		case strings.Contains(c.Type, "EVNT") || strings.Contains(c.Type, "EVENT"):
+		case c.Type == "CLAS/OO" || strings.Contains(c.Type, "EVNT") || strings.Contains(c.Type, "EVENT"):
 			events = append(events, c)
-		case strings.Contains(c.Type, "TYPE"):
+		case c.Type == "CLAS/OT" || strings.Contains(c.Type, "TYPE"):
 			types = append(types, c)
 		default:
 			others = append(others, c)
@@ -445,6 +454,9 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 			obj := record.Object
 			fmt.Fprintf(&sb, "- %s (%s)\n", obj.Name, obj.Type)
 			fmt.Fprintf(&sb, "  URI: %s\n", obj.URI)
+			if obj.ParentURI != "" {
+				fmt.Fprintf(&sb, "  Parent: %s\n", obj.ParentURI)
+			}
 			if obj.User != "" {
 				fmt.Fprintf(&sb, "  User: %s\n", obj.User)
 			}
@@ -452,28 +464,14 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 				sb.WriteString("  Status: DELETED\n")
 			}
 		}
-		if record.Transport != nil {
-			tr := record.Transport
-			fmt.Fprintf(&sb, "  Transport: %s\n", tr.Name)
+		// 7.50 sends an empty <transport/> for a local object.
+		if record.Transport != nil && record.Transport.Name != "" {
+			fmt.Fprintf(&sb, "  Transport: %s\n", record.Transport.Name)
 		}
 		sb.WriteString("\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
-}
-
-// ddicAddress matches the ADT address of a DDIC table or structure.
-var ddicAddress = regexp.MustCompile(`(?i)^/sap/bc/adt/ddic/(tables|structures)/([^/?#]+)$`)
-
-// workbenchAddress gives the generic workbench address for a DDIC table or
-// structure address, the form the where-used resource answers on every release.
-func workbenchAddress(objectURL string) (string, bool) {
-	m := ddicAddress.FindStringSubmatch(objectURL)
-	if m == nil {
-		return "", false
-	}
-	kind := map[string]string{"tables": "tabldt", "structures": "tablds"}[strings.ToLower(m[1])]
-	return "/sap/bc/adt/vit/wb/object_type/" + kind + "/object_name/" + strings.ToUpper(m[2]), true
 }
 
 // referenceTypeFilter reads object_types: a comma-separated string, as the grep

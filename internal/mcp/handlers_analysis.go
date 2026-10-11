@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -299,7 +300,7 @@ func (s *Server) callGraphObjectURI(ctx context.Context, request mcp.CallToolReq
 	objName := strings.ToUpper(strings.TrimSpace(getStringParam(args, "object_name")))
 	if objType == "" || objName == "" {
 		return "", fmt.Errorf("name the object: object_uri, or object_type plus object_name " +
-			"(CLAS, INTF, PROG, FUGR, FUNC)")
+			"(CLAS, INTF, PROG, FUGR, FUNC, or TABL, STRU, VIEW for callers)")
 	}
 
 	if objType == "FUNC" {
@@ -317,9 +318,15 @@ func (s *Server) callGraphObjectURI(ctx context.Context, request mcp.CallToolReq
 		return "", fmt.Errorf("function module %s is not in the repository, so it has no URI to ask about", objName)
 	}
 
+	// DDIC objects go by the generic workbench address: a 7.50 system answers
+	// where-used for /ddic/tables/<t> with a 500 and for this one with the list.
+	if kind, ok := map[string]string{"TABL": "tabldt", "STRU": "tablds", "VIEW": "viewdv"}[objType]; ok {
+		return "/sap/bc/adt/vit/wb/object_type/" + kind + "/object_name/" + url.PathEscape(objName), nil
+	}
+
 	uri := buildADTObjectURL(objType, objName)
 	if uri == "" {
-		return "", fmt.Errorf("%s is not an object type this can address; it knows CLAS, INTF, PROG, FUGR and FUNC", objType)
+		return "", fmt.Errorf("%s is not an object type this can address; it knows CLAS, INTF, PROG, FUGR, FUNC, TABL, STRU and VIEW", objType)
 	}
 	return uri, nil
 }
@@ -371,6 +378,14 @@ func (s *Server) handleAnalyzeCallGraph(ctx context.Context, request mcp.CallToo
 
 	stats := adt.AnalyzeCallGraph(graph)
 	edges := adt.FlattenCallGraph(graph)
+	if direction == "callers" {
+		// The callers graph hangs each caller under the target, so the
+		// flattened parent->child edge reads backwards. Turn it round.
+		for i, e := range edges {
+			edges[i] = adt.CallGraphEdge{CallerURI: e.CalleeURI, CallerName: e.CalleeName,
+				CalleeURI: e.CallerURI, CalleeName: e.CallerName, CalleeKind: graph.Type, Line: e.Line}
+		}
+	}
 
 	output := map[string]interface{}{
 		"object_uri": objectURI,

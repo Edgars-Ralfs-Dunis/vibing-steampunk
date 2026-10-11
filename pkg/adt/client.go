@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Client is the main ADT API client.
@@ -628,6 +629,7 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 //
 // The function group's objectstructure endpoint enumerates all FUGR/I (includes) and
 // FUGR/FF (function modules); we resolve each child's source/main URI and concatenate.
+// 7.50 answers 404 there, and the repository node structure lists the same children.
 // Individual sub-fetches that fail are skipped (best-effort) so a single broken include
 // does not hide deps from the rest of the group.
 //
@@ -639,6 +641,21 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 // below lands in the same list, because a caveat written only to stderr is no
 // caveat at all to an MCP caller.
 func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName string) (string, []Unsearched, error) {
+	_, bodies, missed, err := c.functionGroupSources(ctx, groupName)
+	if err != nil {
+		return "", nil, err
+	}
+	var combined strings.Builder
+	for _, body := range bodies {
+		combined.WriteString(body)
+		combined.WriteString("\n")
+	}
+	return combined.String(), missed, nil
+}
+
+// functionGroupSources reads every source of a function group separately: the
+// URIs and bodies of the non-empty sources that were read, and what was not.
+func (c *Client) functionGroupSources(ctx context.Context, groupName string) ([]string, []string, []Unsearched, error) {
 	groupName = strings.ToLower(groupName)
 
 	structPath := fmt.Sprintf("/sap/bc/adt/functions/groups/%s/objectstructure", url.PathEscape(groupName))
@@ -646,8 +663,26 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		Method: http.MethodGet,
 		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
 	})
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		// 7.50 has no objectstructure (see compat.go); the node structure
+		// lists the same includes and modules on both releases.
+		nodes, err := c.functionGroupNodes(ctx, strings.ToUpper(groupName))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		srcURIs := []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
+		for _, n := range nodes {
+			// A category header row has a type and no URI.
+			t, uri := strings.TrimSpace(n.ObjectType), strings.TrimSpace(n.ObjectURI)
+			if (t == "FUGR/I" || t == "FUGR/FF") && uri != "" {
+				srcURIs = append(srcURIs, uri+"/source/main")
+			}
+		}
+		return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+	}
 	if err != nil {
-		return "", nil, fmt.Errorf("getting function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting function group structure: %w", err)
 	}
 
 	type atomLink struct {
@@ -662,7 +697,7 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 	}
 	var root element
 	if err := xml.Unmarshal(resp.Body, &root); err != nil {
-		return "", nil, fmt.Errorf("parsing function group structure: %w", err)
+		return nil, nil, nil, fmt.Errorf("parsing function group structure: %w", err)
 	}
 
 	seen := make(map[string]bool)
@@ -695,6 +730,11 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		// Fallback: at least fetch the top-level source so we get something.
 		srcURIs = []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
 	}
+	return c.readFunctionGroupSources(ctx, groupName, srcURIs)
+}
+
+// readFunctionGroupSources fetches the given sources of a function group.
+func (c *Client) readFunctionGroupSources(ctx context.Context, groupName string, srcURIs []string) ([]string, []string, []Unsearched, error) {
 	sort.Strings(srcURIs)
 
 	var missed []Unsearched
@@ -787,15 +827,14 @@ func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName strin
 		}
 	}
 
-	var combined strings.Builder
-	for _, body := range results {
-		if body == "" {
-			continue
+	var uris, bodies []string
+	for idx, body := range results {
+		if body != "" {
+			uris = append(uris, srcURIs[idx])
+			bodies = append(bodies, body)
 		}
-		combined.WriteString(body)
-		combined.WriteString("\n")
 	}
-	return combined.String(), missed, nil
+	return uris, bodies, missed, nil
 }
 
 // GetFunction retrieves the source code of a function module.
@@ -1025,11 +1064,17 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 // Unlike GetPackage, which reads the nodestructure API and cannot distinguish
 // "package does not exist" from "package exists but has no children" (both
 // return an empty tree), this is a definitive existence check.
+//
+// 7.50 has no package resource: the probe answers 404 "No suitable resource
+// found" for packages that exist too (ZED, 2026-10-11, ZADT_VSP and
+// ZFIX_DATA). A 404 is therefore settled by the quick search, which on 7.50
+// returns the DEVC/K reference for an existing package and nothing otherwise.
 func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, error) {
 	if packageName == "" {
 		return false, fmt.Errorf("empty package name")
 	}
-	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(strings.ToUpper(packageName)))
+	name := strings.ToUpper(packageName)
+	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(name))
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "application/*",
@@ -1038,10 +1083,19 @@ func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, e
 		return true, nil
 	}
 	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-		return false, nil
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false, err
 	}
-	return false, err
+	hits, err := c.SearchObjectByType(ctx, name, "DEVC/K", 10)
+	if err != nil {
+		return false, fmt.Errorf("checking package %s by search: %w", name, err)
+	}
+	for _, h := range hits {
+		if strings.EqualFold(h.Name, name) && strings.HasPrefix(h.Type, "DEVC") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GetPackage retrieves the contents of a package using the nodestructure API.
@@ -1191,6 +1245,8 @@ type TableContentsResult struct {
 	Rows    []map[string]interface{}
 	// Notes says what RunQuery rewrote before sending the statement.
 	Notes []string `json:",omitempty"`
+	// Truncated says SAP had more rows than were asked for.
+	Truncated bool `json:"-"`
 }
 
 // TableColumn represents a column in table contents.
@@ -1219,9 +1275,13 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 	if maxRows <= 0 {
 		maxRows = 100
 	}
+	// Above about 100,000 the ddic preview silently answers ~100 rows; the
+	// probe row below still says when the clamp cut the answer.
+	maxRows = min(maxRows, UnlimitedRows)
 
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	// One row more than wanted tells a capped answer from a complete one.
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 	params.Set("ddicEntityName", tableName)
 
 	opts := &RequestOptions{
@@ -1232,7 +1292,14 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 
 	// Add SQL filter as request body if provided
 	if sqlFilter != "" {
-		opts.Body = []byte(sqlFilter)
+		body, err := sqlBody(sqlFilter)
+		if err != nil {
+			return nil, err
+		}
+		// ddic wraps the text at blanks itself and only that is proven on
+		// 7.50, so the wrap goes out as blanks: what it fixes is the word
+		// over 255 characters that ddic cuts in two.
+		opts.Body = []byte(strings.ReplaceAll(body, "\n", " "))
 		opts.ContentType = "text/plain"
 	}
 
@@ -1241,7 +1308,7 @@ func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows
 		return nil, fmt.Errorf("getting table contents: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // RunQuery executes a freestyle SQL query against the SAP database.
@@ -1277,21 +1344,26 @@ func (c *Client) runQueryRaw(ctx context.Context, sqlQuery string, maxRows int) 
 		maxRows = 100
 	}
 
+	body, err := sqlBody(sqlQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	params.Set("rowNumber", fmt.Sprintf("%d", maxRows+1))
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/datapreview/freestyle", &RequestOptions{
 		Method:      http.MethodPost,
 		Query:       params,
 		Accept:      "application/*",
-		Body:        []byte(wrapSQL(sqlQuery)),
+		Body:        []byte(body),
 		ContentType: "text/plain",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("running query: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	return parseTableContents(resp.Body, maxRows)
 }
 
 // wrapSQL keeps every line of a statement under the data preview's limit.
@@ -1372,8 +1444,23 @@ func splitAtCommas(word string) []string {
 	return parts
 }
 
-// parseTableContents parses the XML response for table contents.
-func parseTableContents(data []byte) (*TableContentsResult, error) {
+// sqlBody is a statement wrapped for the data preview. One that still has a
+// line over 255 characters is refused here, because SAP cuts it without an
+// error: freestyle drops the tail of the line, and ddic splits the word, so a
+// literal loses half and the count comes back short.
+func sqlBody(query string) (string, error) {
+	w := wrapSQL(query)
+	for n, line := range strings.Split(w, "\n") {
+		if l := utf8.RuneCountInString(line); l > 255 {
+			return "", fmt.Errorf("SQL not sent: line %d is %d characters after wrapping, and SAP's data preview cuts a line at 255 characters without an error; add blanks or line breaks between the words of %.40q", n+1, l, line)
+		}
+	}
+	return w, nil
+}
+
+// parseTableContents parses the XML response for table contents, keeping at
+// most limit rows. 7.50's ddic preview returns one row more than rowNumber.
+func parseTableContents(data []byte, limit int) (*TableContentsResult, error) {
 	// The ADT table data response is complex XML
 	// We'll parse it into a generic structure
 	type tableData struct {
@@ -1426,6 +1513,9 @@ func parseTableContents(data []byte) (*TableContentsResult, error) {
 		}
 		result.Rows = append(result.Rows, row)
 	}
+	if len(result.Rows) > limit {
+		result.Rows, result.Truncated = result.Rows[:limit], true
+	}
 
 	return result, nil
 }
@@ -1440,34 +1530,26 @@ type Transaction struct {
 }
 
 // GetTransaction retrieves information about a transaction.
+// It reads TSTC/TSTCT through the data preview: the vit/wb TRAN URI has no
+// mapping on 7.50 (500 "No URI-Mapping defined", upstream #232). The
+// statements stay short because the ddic preview cuts lines at 255 chars.
 func (c *Client) GetTransaction(ctx context.Context, tcode string) (*Transaction, error) {
-	tcode = strings.ToUpper(tcode)
+	tcode = strings.ToUpper(strings.TrimSpace(tcode))
 
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/TRAN/object_name/%s", tcode), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	res, err := c.GetTableContents(ctx, "TSTC", 1, "SELECT PGMNA FROM TSTC WHERE TCODE = '"+sqlQuote(tcode)+"'")
 	if err != nil {
 		return nil, fmt.Errorf("getting transaction: %w", err)
 	}
-
-	// Parse transaction info
-	type tranInfo struct {
-		Name        string `xml:"name,attr"`
-		Description string `xml:"description,attr"`
-		Program     string `xml:"program,attr"`
+	if len(res.Rows) == 0 {
+		return nil, fmt.Errorf("transaction %s not found (no TSTC row)", tcode)
 	}
+	tran := &Transaction{Name: tcode, Program: getString(res.Rows[0], "PGMNA")}
 
-	var ti tranInfo
-	if err := xml.Unmarshal(resp.Body, &ti); err != nil {
-		return nil, fmt.Errorf("parsing transaction: %w", err)
+	txt, err := c.GetTableContents(ctx, "TSTCT", 1, "SELECT TTEXT FROM TSTCT WHERE SPRSL = '"+sapLanguageKey(c.config.Language)+"' AND TCODE = '"+sqlQuote(tcode)+"'")
+	if err == nil && len(txt.Rows) > 0 {
+		tran.Description = getString(txt.Rows[0], "TTEXT")
 	}
-
-	return &Transaction{
-		Name:        ti.Name,
-		Description: ti.Description,
-		Program:     ti.Program,
-	}, nil
+	return tran, nil
 }
 
 // --- Type Info Operations ---
@@ -1483,35 +1565,17 @@ type TypeInfo struct {
 
 // GetTypeInfo retrieves information about a data type.
 func (c *Client) GetTypeInfo(ctx context.Context, typeName string) (*TypeInfo, error) {
-	typeName = strings.ToUpper(typeName)
-
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", typeName), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	doc, err := c.getDataElement(ctx, typeName, "")
 	if err != nil {
 		return nil, fmt.Errorf("getting type info: %w", err)
 	}
 
-	type typeData struct {
-		Name        string `xml:"name,attr"`
-		Type        string `xml:"type,attr"`
-		Description string `xml:"description,attr"`
-		Length      int    `xml:"length,attr"`
-		Decimals    int    `xml:"decimals,attr"`
-	}
-
-	var td typeData
-	if err := xml.Unmarshal(resp.Body, &td); err != nil {
-		return nil, fmt.Errorf("parsing type info: %w", err)
-	}
-
 	return &TypeInfo{
-		Name:        td.Name,
-		Type:        td.Type,
-		Description: td.Description,
-		Length:      td.Length,
-		Decimals:    td.Decimals,
+		Name:        doc.Name,
+		Type:        doc.DataElement.DataType,
+		Description: doc.Description,
+		Length:      doc.DataElement.Length,
+		Decimals:    doc.DataElement.Decimals,
 	}, nil
 }
 
@@ -1522,6 +1586,7 @@ type SystemInfo struct {
 	SystemID        string `json:"systemId"`
 	Client          string `json:"client"`
 	SAPRelease      string `json:"sapRelease"`
+	SupportPack     string `json:"supportPack,omitempty"` // SAP_BASIS SP level (CVERS EXTRELEASE)
 	KernelRelease   string `json:"kernelRelease,omitempty"`
 	DatabaseRelease string `json:"databaseRelease,omitempty"`
 	DatabaseSystem  string `json:"databaseSystem,omitempty"`
@@ -1565,13 +1630,11 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		row := basisResult.Rows[0]
 		info.SAPRelease = getString(row, "RELEASE")
 		info.ABAPRelease = getString(row, "RELEASE")
+		info.SupportPack = getString(row, "EXTRELEASE")
 	}
 
-	// Try to get kernel info from CVERS (optional)
-	kernelResult, err := c.RunQuery(ctx, "SELECT RELEASE FROM CVERS WHERE COMPONENT = 'SAP_ABA'", 1)
-	if err == nil && len(kernelResult.Rows) > 0 {
-		info.KernelRelease = getString(kernelResult.Rows[0], "RELEASE")
-	}
+	// KernelRelease stays empty: no SQL-readable table holds the kernel
+	// release (SAP_ABA in CVERS is a software component, not the kernel).
 
 	// Try to detect HANA from CVERS (optional)
 	hanaResult, err := c.RunQuery(ctx,
@@ -1613,10 +1676,25 @@ type InstalledComponent struct {
 func (c *Client) GetInstalledComponents(ctx context.Context) ([]InstalledComponent, error) {
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/system/components", &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "application/atom+xml;type=feed, application/xml;q=0.8",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting installed components: %w", err)
+	}
+
+	// 7.50 answers an Atom feed: entry id = component, entry title =
+	// "release;SP package;SP level;description".
+	var feed AtomFeed
+	if xml.Unmarshal(resp.Body, &feed) == nil {
+		result := make([]InstalledComponent, 0, len(feed.Entries))
+		for _, e := range feed.Entries {
+			ic := InstalledComponent{Name: e.ID, Description: e.Title}
+			if f := strings.SplitN(e.Title, ";", 4); len(f) == 4 {
+				ic = InstalledComponent{Name: e.ID, Release: f[0], SupportPack: f[2], Description: f[3]}
+			}
+			result = append(result, ic)
+		}
+		return result, nil
 	}
 
 	type componentXML struct {
@@ -2079,6 +2157,15 @@ func (c *Client) GetObjectStructureCAI(ctx context.Context, objectName string, m
 	}
 	structure, err := c.GetClassObjectStructure(ctx, objectName)
 	if err != nil {
+		// The resource is the class one: a program answers "does not exist" and an
+		// interface a 500 "Class implementation part not found". Say what it is.
+		if hits, serr := c.SearchObject(ctx, strings.ToUpper(objectName), 10); serr == nil {
+			for _, h := range hits {
+				if strings.EqualFold(h.Name, objectName) && !strings.HasPrefix(h.Type, "CLAS") {
+					return nil, fmt.Errorf("object structure is read for classes only; %s is %s, not a class", h.Name, h.Type)
+				}
+			}
+		}
 		return nil, err
 	}
 	if structure == nil {

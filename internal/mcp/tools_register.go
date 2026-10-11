@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -169,7 +170,7 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetFunctionGroup") {
 		s.mcpServer.AddTool(mcp.NewTool("GetFunctionGroup",
-			mcp.WithDescription("Retrieve ABAP Function Group source code"),
+			mcp.WithDescription("Function group metadata and its function module list (JSON), not source"),
 			mcp.WithString("function_group",
 				mcp.Required(),
 				mcp.Description("Name of the function group"),
@@ -428,10 +429,10 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetObjectStructure") {
 		s.mcpServer.AddTool(mcp.NewTool("GetObjectStructure",
-			mcp.WithDescription("Get object explorer tree structure. Returns hierarchical view of object components."),
+			mcp.WithDescription("Get a class's component tree: methods, attributes, types, events and implemented interfaces. Classes only; any other object type is refused."),
 			mcp.WithString("object_name",
 				mcp.Required(),
-				mcp.Description("Object name (e.g., ZCL_TEST, ZPROGRAM)"),
+				mcp.Description("Class name (e.g., ZCL_TEST)"),
 			),
 			mcp.WithNumber("max_results",
 				mcp.Description("Maximum number of results (default: 100)"),
@@ -448,7 +449,7 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 				mcp.Description("ADT URI of the object (e.g., /sap/bc/adt/oo/classes/zcl_test). Or give object_type and object_name."),
 			),
 			mcp.WithString("object_type",
-				mcp.Description("CLAS, INTF, PROG, FUGR or FUNC — with object_name, instead of object_uri"),
+				mcp.Description("CLAS, INTF, PROG, FUGR, FUNC, TABL, STRU or VIEW — with object_name, instead of object_uri"),
 			),
 			mcp.WithString("object_name",
 				mcp.Description("Object name, e.g. ZCL_ORDER_PROCESSING"),
@@ -596,7 +597,7 @@ func (s *Server) registerDiagnosticsTools(shouldRegister func(string) bool) {
 				mcp.Description("Latest date, YYYY-MM-DD or YYYYMMDD (alias: date_to)"),
 			),
 			mcp.WithNumber("max_results",
-				mcp.Description("Maximum number of results (default: 100)"),
+				mcp.Description(fmt.Sprintf("Maximum number of results (default: %d)", defaultDumps)),
 			),
 		), s.handleListDumps)
 	}
@@ -824,6 +825,9 @@ func (s *Server) registerSearchTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithNumber("maxResults",
 				mcp.Description("Maximum number of results to return (default 100)"),
+			),
+			mcp.WithString("objectType",
+				mcp.Description("Only objects of this type (CLAS, PROG, INTF, FUGR, ...)"),
 			),
 		), s.handleSearchObject)
 	}
@@ -1229,7 +1233,7 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 	// Transport-related tools
 	if shouldRegister("GetUserTransports") {
 		s.mcpServer.AddTool(mcp.NewTool("GetUserTransports", append([]mcp.ToolOption{
-			mcp.WithDescription("Get the transport requests of a user from the transport organizer (requires --enable-transports): workbench and customizing, modifiable and released, with tasks and objects, grouped by target and CTS project. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus (the organizer returns only released requests without them), falls back to the saved search configuration and then to E070/E07T."),
+			mcp.WithDescription("Get the transport requests of a user from the transport organizer (requires --enable-transports or --allow-transportable-edits): workbench and customizing, modifiable and released, with tasks and objects, grouped by target and CTS project. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus (the organizer returns only released requests without them), falls back to the saved search configuration and then to E070/E07T."),
 			mcp.WithString("user_name",
 				mcp.Description("SAP user name (uppercased); default: the connection user. '*' for every user (source sql only)"),
 			),
@@ -1239,7 +1243,7 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GetTransportInfo") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTransportInfo",
-			mcp.WithDescription("Get transport information for an ABAP object (requires --enable-transports flag). Returns available transports and lock status."),
+			mcp.WithDescription("Get transport information for an ABAP object (requires --enable-transports or --allow-transportable-edits). Returns available transports and lock status."),
 			mcp.WithString("object_url",
 				mcp.Required(),
 				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
@@ -1536,10 +1540,10 @@ func (s *Server) registerEditTools(shouldRegister func(string) bool) {
 func (s *Server) registerGrepTools(shouldRegister func(string) bool) {
 	if shouldRegister("GrepObject") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepObject",
-			mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing."),
+			mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing. A function group URL is read whole (frame, includes, function modules) and a class URL with its local definitions, implementations, macros and test classes; each match then names its source and counts lines within it. A .../source/main or class include URL reads only that source."),
 			mcp.WithString("object_url",
 				mcp.Required(),
-				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST, /sap/bc/adt/functions/groups/ZFG, /sap/bc/adt/oo/classes/ZCL_X/includes/testclasses)"),
 			),
 			mcp.WithString("pattern",
 				mcp.Required(),
@@ -1556,7 +1560,7 @@ func (s *Server) registerGrepTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("GrepPackage") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepPackage",
-			mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object. Use for package-wide analysis, finding patterns across multiple programs/classes."),
+			mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object, objects read per type (searched) and anything that could not be read (unsearched, partial). Function groups are read with their includes and function modules, classes with their local includes. Use for package-wide analysis, finding patterns across multiple programs/classes."),
 			mcp.WithString("package_name",
 				mcp.Required(),
 				mcp.Description("Package name (e.g., $TMP, ZPACKAGE)"),
@@ -1642,6 +1646,26 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 					"Applied before max_results: a table's code callers otherwise hide behind its structures."),
 			),
 		), s.handleFindReferences)
+	}
+
+	if shouldRegister("FieldWhereUsed") {
+		s.mcpServer.AddTool(mcp.NewTool("FieldWhereUsed",
+			mcp.WithDescription("Code that uses a table field, from SAP's where-used index (WBCROSSGT), which ADT on 7.50 "+
+				"does not offer: classes with their methods, programs, includes. Read-only; local unit tests are left out "+
+				"but counted. An empty answer can mean the index is incomplete, so grep a likely package then. "+
+				"Infotype code mostly types against the Pnnnn structure: ask for P0001 as well as PA0001."),
+			mcp.WithString("table",
+				mcp.Required(),
+				mcp.Description("Table name, e.g. T549A"),
+			),
+			mcp.WithString("field",
+				mcp.Required(),
+				mcp.Description("Field name, e.g. CALCR"),
+			),
+			mcp.WithNumber("max_results",
+				mcp.Description("Most index rows to read (default 1000, at most 89999). The answer says when it cut the list."),
+			),
+		), s.handleFieldWhereUsed)
 	}
 
 	if shouldRegister("GetContext") {
@@ -2125,7 +2149,7 @@ func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 				mcp.Description("Variant name to use for selection screen (optional)"),
 			),
 			mcp.WithString("params",
-				mcp.Description("JSON object with selection screen parameters (e.g., '{\"P_BUKRS\":\"1000\",\"S_KUNNR\":{\"SIGN\":\"I\",\"OPTION\":\"EQ\",\"LOW\":\"0000001000\"}}'). Keys are parameter names."),
+				mcp.Description("JSON object keyed by selection-screen name (e.g., '{\"P_BUKRS\":\"1000\",\"S_KUNNR\":\"0000001000\"}'). A value is a PARAMETERS value or one select-option I/EQ value, at most 45 characters; {\"SIGN\":\"I\",\"OPTION\":\"EQ\",\"LOW\":...} is the same row. Ranges (BT, E, HIGH, several rows) are refused: the deployed ZADT_VSP bridge cannot carry them."),
 			),
 			mcp.WithString("client",
 				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
@@ -2144,7 +2168,7 @@ func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 				mcp.Description("Variant name (optional)"),
 			),
 			mcp.WithString("params",
-				mcp.Description("JSON object with selection screen parameters"),
+				mcp.Description("JSON object keyed by selection-screen name, as for RunReport: one I/EQ value per name, at most 45 characters; ranges are refused"),
 			),
 			mcp.WithString("client",
 				mcp.Description("SAP client to execute in, e.g. \"460\". Optional: defaults to the configured client. Customizing is client-dependent, so maintaining it must run in the client that owns the data. A read-side SetClient does NOT redirect execution - name the client explicitly."),
@@ -2292,7 +2316,7 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 func (s *Server) registerVersionHistoryTools(shouldRegister func(string) bool) {
 	if shouldRegister("GetRevisions") {
 		s.mcpServer.AddTool(mcp.NewTool("GetRevisions",
-			mcp.WithDescription("List version history (revisions) of an ABAP object. Returns versions with dates, authors, and transport requests. Use version URIs with GetRevisionSource or CompareVersions."),
+			mcp.WithDescription("List version history (revisions) of an ABAP object. Returns versions with dates, authors, and transport requests. Version numbers are the ADT feed's, not VRSD VERSNO: \"00000\" is the current active source, VRSD 00000 appears as the highest number, so there is one entry more than VRSD has rows; order by date, not number. Use version URIs with GetRevisionSource or CompareVersions."),
 			mcp.WithString("type",
 				mcp.Required(),
 				mcp.Description("Object type: PROG, CLAS, INTF, FUNC, INCL, DDLS, BDEF, SRVD"),

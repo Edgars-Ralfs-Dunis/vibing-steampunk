@@ -33,6 +33,11 @@ type JobStatusResult struct {
 	JobCount string   `json:"jobcount"`
 	Status   string   `json:"status"` // scheduled, running, finished, aborted
 	SpoolIDs []string `json:"spool_ids,omitempty"`
+	// JobLog (the job log's last E/A lines) and Server (TBTCO-REAXSERVER)
+	// come from a report service that sends them; the one deployed before
+	// RWF 10's supervised redeploy sends neither.
+	JobLog []string `json:"joblog,omitempty"`
+	Server string   `json:"server,omitempty"`
 }
 
 // SpoolOutputResult contains spool output data.

@@ -285,6 +285,20 @@ func (c *BaseWebSocketClient) readMessages() {
 			onDisconnect := c.onDisconnect
 			c.mu.Unlock()
 
+			// No reply can arrive now: fail every waiting call instead of
+			// letting it sit out its timeout. A dump in the called code (e.g.
+			// APC_ILLEGAL_STATEMENT) is the usual reason the socket closes.
+			c.pendingMu.Lock()
+			for id, ch := range c.pending {
+				select {
+				case ch <- &WSResponse{ID: id, Error: &WSError{Code: "DISCONNECTED", Message: fmt.Sprintf(
+					"the ZADT_VSP connection closed before the reply (%v); a dump in the called code ends the session, see ListDumps", err)}}:
+				default:
+				}
+				delete(c.pending, id)
+			}
+			c.pendingMu.Unlock()
+
 			// Call disconnect callback if set
 			if onDisconnect != nil {
 				onDisconnect()

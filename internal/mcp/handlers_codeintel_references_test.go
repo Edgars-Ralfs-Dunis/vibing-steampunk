@@ -182,6 +182,15 @@ func TestReferencesFiltersByTypeBeforeTheCap(t *testing.T) {
 			t.Errorf("filter %v: total counts what matched, filtered_out what did not; got %v and %v",
 				filter, out["total"], out["filtered_out"])
 		}
+		if out["scaffolding"] != float64(0) {
+			t.Errorf("filter %v: a filtered hit is not scaffolding too, got %v", filter, out["scaffolding"])
+		}
+	}
+
+	out := referencesAnswer(t, srv, map[string]any{
+		"object_url": "/sap/bc/adt/vit/wb/object_type/tabldt/object_name/ZT_DEMO", "object_types": "PROG"})
+	if out["note"] != nil {
+		t.Errorf("a filter that removed every hit must not say nothing uses it: %v", out["note"])
 	}
 }
 
@@ -215,5 +224,130 @@ func TestReferencesRetriesATableUnderTheWorkbenchAddress(t *testing.T) {
 	}
 	if refs, _ := out["references"].([]any); len(refs) != 2 {
 		t.Errorf("the workbench address knows two callers, got %d", len(refs))
+	}
+}
+
+// A 7.50 system (ZED) sets isResult on no row of this answer. For
+// ZCL_ADT_HTTP_GATE its one caller, a method of ZCL_VSP_APC_HANDLER, and for
+// ZALA_CHANGE_LOG the reports filed straight under their package, all arrive as
+// isResult="false" rows carrying usageInformation="gradeDirect" — the rows
+// GetCallersOf reads. Filtering on isResult alone said "nothing uses it".
+const references750XML = `<?xml version="1.0" encoding="utf-8"?><usageReferences:usageReferenceResult><usageReferences:referencedObjects>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/packages/zadt_vsp" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZADT_VSP" adtcore:type="DEVC/K"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" parentUri="/sap/bc/adt/packages/zadt_vsp" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZCL_VSP_APC_HANDLER" adtcore:type="CLAS/OC"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler/source/main#type=CLAS%2FOM;name=IF_APC_WSP_EXTENSION~ON_ACCEPT" parentUri="/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" isResult="false" usageInformation="gradeDirect,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="IF_APC_WSP_EXTENSION~ON_ACCEPT" adtcore:type="CLAS/OM"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/packages/zala" isResult="false" canHaveChildren="true">` +
+	`<usageReferences:adtObject adtcore:name="ZALA" adtcore:type="DEVC/K"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/programs/programs/zala_fulldump_selection" parentUri="/sap/bc/adt/packages/zala" isResult="false" usageInformation="gradeDirect,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="ZALA_FULLDUMP_SELECTION" adtcore:type="PROG/P"/></usageReferences:referencedObject>` +
+	`<usageReferences:referencedObject uri="/sap/bc/adt/oo/classes/zcl_adt_http_gate/source/main#type=CLAS%2FOM;name=IS_AUTHORIZED" parentUri="/sap/bc/adt/oo/classes/zcl_adt_http_gate" isResult="false" usageInformation="gradeComponent,includeProductive">` +
+	`<usageReferences:adtObject adtcore:name="IS_AUTHORIZED" adtcore:type="CLAS/OM"/></usageReferences:referencedObject>` +
+	`</usageReferences:referencedObjects></usageReferences:usageReferenceResult>`
+
+func TestReferencesKeepsGradeDirectRowsWithoutIsResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(references750XML))
+		}
+	}))
+	defer srv.Close()
+
+	out := referencesAnswer(t, srv, map[string]any{"object_url": "/sap/bc/adt/oo/classes/zcl_adt_http_gate"})
+	if out["total"] != float64(2) {
+		t.Errorf("the caller's method and the report are references, got total %v", out["total"])
+	}
+	if out["scaffolding"] != float64(4) {
+		t.Errorf("two packages, one class container and the target's own part are not, got scaffolding %v", out["scaffolding"])
+	}
+	if out["note"] != nil {
+		t.Errorf("a where-used list with callers must not say nothing uses it: %v", out["note"])
+	}
+}
+
+// GetCallersOf reaches the where-used list through WhereUsed, not through the
+// FindReferences handler, so the handler's retry never helped it: a
+// /ddic/tables/ address answered 500 on 7.50, and TABL could not be named.
+func TestCallersOfATableReachTheWorkbenchAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method != http.MethodPost {
+			return
+		}
+		if strings.HasPrefix(r.URL.Query().Get("uri"), "/sap/bc/adt/ddic/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`<exc:exception><message lang="EN">Error while converting object references</message></exc:exception>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(references750XML))
+	}))
+	defer srv.Close()
+
+	s := &Server{adtClient: adt.NewClient(srv.URL, "user", "pass")}
+	for _, args := range []map[string]any{
+		{"object_uri": "/sap/bc/adt/ddic/tables/zala_change_log"},
+		{"object_type": "TABL", "object_name": "zala_change_log"},
+	} {
+		var req mcp.CallToolRequest
+		req.Params.Arguments = args
+		answer, err := s.callGraphAnswer(context.Background(), req, "callers")
+		if err != nil {
+			t.Errorf("%v: %v", args, err)
+			continue
+		}
+		found := false
+		for _, c := range answer["callers"].([]callerAnswer) {
+			found = found || c.Name == "ZCL_VSP_APC_HANDLER"
+		}
+		if !found {
+			t.Errorf("%v: the workbench address knows ZCL_VSP_APC_HANDLER, got %v", args, answer["callers"])
+		}
+	}
+}
+
+// The callers graph hangs each caller under the target, and flattening it as
+// parent->child said ZCL_ADT_HTTP_GATE calls ZCL_VSP_APC_HANDLER: backwards.
+func TestAnalyzeCallGraphCallersPointAtTheTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(references750XML))
+		}
+	}))
+	defer srv.Close()
+
+	s := &Server{adtClient: adt.NewClient(srv.URL, "user", "pass")}
+	var req mcp.CallToolRequest
+	req.Params.Arguments = map[string]any{"object_type": "CLAS", "object_name": "ZCL_ADT_HTTP_GATE", "direction": "callers"}
+	result, err := s.handleAnalyzeCallGraph(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Edges []adt.CallGraphEdge `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(toolResultText(t, result)), &out); err != nil {
+		t.Fatalf("the answer should be JSON: %v", err)
+	}
+	var apc *adt.CallGraphEdge
+	for i, e := range out.Edges {
+		if e.CalleeName != "ZCL_ADT_HTTP_GATE" || e.CalleeKind != "CLAS" {
+			t.Errorf("every callers edge points at the target CLAS ZCL_ADT_HTTP_GATE, got %+v", e)
+		}
+		if e.CallerName == "ZCL_VSP_APC_HANDLER" {
+			apc = &out.Edges[i]
+		}
+	}
+	if apc == nil {
+		t.Fatalf("want ZCL_VSP_APC_HANDLER -> ZCL_ADT_HTTP_GATE, got %+v", out.Edges)
+	}
+	if apc.CallerURI != "/sap/bc/adt/oo/classes/zcl_vsp_apc_handler" {
+		t.Errorf("the caller's URI belongs on the edge, got %+v", *apc)
 	}
 }

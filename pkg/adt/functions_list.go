@@ -48,7 +48,16 @@ func (c *Client) ListFunctionModules(ctx context.Context, groupName string) ([]F
 	if groupName == "" {
 		return nil, fmt.Errorf("function group name is required")
 	}
+	nodes, err := c.functionGroupNodes(ctx, groupName)
+	if err != nil {
+		return nil, err
+	}
+	return functionModulesFromNodes(nodes), nil
+}
 
+// functionGroupNodes reads the node structure of a function group (name in
+// upper case): its includes and modules, on both releases.
+func (c *Client) functionGroupNodes(ctx context.Context, groupName string) ([]repositoryNode, error) {
 	query := url.Values{}
 	query.Set("parent_type", "FUGR/F")
 	query.Set("parent_name", groupName)
@@ -70,7 +79,7 @@ func (c *Client) ListFunctionModules(ctx context.Context, groupName string) ([]F
 		return nil, fmt.Errorf("parsing the node structure of function group %s: %w", groupName, err)
 	}
 
-	return functionModulesFromNodes(doc.Nodes), nil
+	return doc.Nodes, nil
 }
 
 // functionModulesFromNodes keeps the modules and drops everything else.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -235,10 +236,12 @@ func TestAs4userPredicate(t *testing.T) {
 // ctsServer answers the CTS listing with a document the old parsers could not
 // navigate, and the E070 fallback query with two rows.
 type ctsServer struct {
-	mu       sync.Mutex
-	listing  string
-	queries  []string
-	sqlCalls int
+	mu        sync.Mutex
+	listing   string
+	e070      string // E070 rows to answer with; e070Rows when empty
+	queries   []string
+	sqlCalls  int
+	treeCalls int
 }
 
 func (s *ctsServer) start(t *testing.T) *Client {
@@ -250,6 +253,9 @@ func (s *ctsServer) start(t *testing.T) *Client {
 			w.WriteHeader(http.StatusOK)
 
 		case strings.Contains(r.URL.Path, "/cts/transportrequests"):
+			s.mu.Lock()
+			s.treeCalls++
+			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(s.listing))
 
@@ -261,7 +267,7 @@ func (s *ctsServer) start(t *testing.T) *Client {
 			s.sqlCalls++
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(e070Rows))
+			_, _ = w.Write([]byte(firstNonEmpty(s.e070, e070Rows)))
 
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -396,6 +402,11 @@ func TestListTransportsWildcardUser(t *testing.T) {
 	if !owners["TESTUSER"] || !owners["OTHERUSER"] {
 		t.Errorf("expected transports from more than one owner, got %v", owners)
 	}
+	// F3-06: '*' is the sql source's alone; asking the tree for every user's
+	// requests made a 7.50 system build them all until the client timed out.
+	if srv.treeCalls != 0 {
+		t.Errorf("'*' asked the organizer tree %d times", srv.treeCalls)
+	}
 }
 
 func TestListTransportsNamedUserStillFilters(t *testing.T) {
@@ -407,5 +418,163 @@ func TestListTransportsNamedUserStillFilters(t *testing.T) {
 	}
 	if q := srv.lastQuery(); !strings.Contains(q, "AS4USER = 'TESTUSER'") {
 		t.Errorf("expected an AS4USER equality for a named user:\n%s", q)
+	}
+}
+
+// RWF 8: 7.50 answers GET /cts/transportrequests/<N> with the user's whole
+// organizer tree (captured on a 7.50 system), so the request sits at
+// tm:root/workbench/modifiable/request, next to the user's other requests.
+func TestGetTransportFindsTheRequestInA750Tree(t *testing.T) {
+	body, err := os.ReadFile("testdata/gettransport-750.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := (&ctsServer{listing: string(body)}).start(t)
+
+	got, err := client.GetTransport(context.Background(), "dvdk9adspp")
+	if err != nil {
+		t.Fatalf("GetTransport: %v", err)
+	}
+	if got.Number != "DVDK9ADSPP" || got.Owner != "DEVU" || got.Description != "Example development request" {
+		t.Errorf("picked the wrong request: %+v", got.TransportSummary)
+	}
+	if got.Type != "K" || got.Status != "D" {
+		t.Errorf("type/status = %q/%q, want K/D", got.Type, got.Status)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].Number != "DVDK9ADSPQ" || len(got.Tasks[0].Objects) != 2 {
+		t.Fatalf("expected task DVDK9ADSPQ with 2 objects, got %+v", got.Tasks)
+	}
+	if o := got.Tasks[0].Objects[0]; o.PgmID != "R3TR" || o.Type != "SUSC" || o.Name != "ZADT" {
+		t.Errorf("first task object = %+v", o)
+	}
+
+	// The other request in the same body carries objects on the request itself.
+	other, err := client.GetTransport(context.Background(), "DVDK9ABQUJ")
+	if err != nil {
+		t.Fatalf("GetTransport DVDK9ABQUJ: %v", err)
+	}
+	if len(other.Objects) != 2 || len(other.Tasks) != 1 || other.Tasks[0].Number != "DVDK9ABQUK" {
+		t.Errorf("DVDK9ABQUJ: %d objects, tasks %+v", len(other.Objects), other.Tasks)
+	}
+
+	// A request the tree does not hold names what came back instead.
+	_, err = client.GetTransport(context.Background(), "DVDK9XXXXX")
+	if err == nil || !strings.Contains(err.Error(), "DVDK9XXXXX") || !strings.Contains(err.Error(), "<root>") ||
+		!strings.Contains(err.Error(), `tm:root xmlns:adtcore`) {
+		t.Errorf("miss error should name the number, the root element and the body start, got %v", err)
+	}
+}
+
+// RWF 17: GetUserTransports and GetTransportInfo only read, so they open on
+// the same flag ListTransports and GetTransport do; a refusal names the flag.
+func TestTransportReadsOpenWithTransportableEdits(t *testing.T) {
+	client := (&ctsServer{listing: treeWithoutTargets}).start(t)
+	client.config.Safety = SafetyConfig{AllowTransportableEdits: true}
+	ctx := context.Background()
+
+	if _, err := client.GetUserTransports(ctx, "TESTUSER"); err != nil {
+		t.Errorf("GetUserTransports refused under --allow-transportable-edits: %v", err)
+	}
+	if _, err := client.GetTransportInfo(ctx, "/sap/bc/adt/programs/programs/zdemo", "ZDEMO"); err != nil && strings.Contains(err.Error(), "blocked") {
+		t.Errorf("GetTransportInfo refused under --allow-transportable-edits: %v", err)
+	}
+
+	client.config.Safety = SafetyConfig{}
+	for name, call := range map[string]func() error{
+		"GetUserTransports": func() error { _, err := client.GetUserTransports(ctx, "TESTUSER"); return err },
+		"GetTransportInfo":  func() error { _, err := client.GetTransportInfo(ctx, "/x", "ZDEMO"); return err },
+		"CreateTransport":   func() error { _, err := client.CreateTransport(ctx, "/x", "d", "ZDEMO"); return err },
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "SAP_ENABLE_TRANSPORTS") {
+			t.Errorf("%s: refusal should name the missing flag, got %v", name, err)
+		}
+	}
+}
+
+// F3-05: E070 knows a transport of copies and when a request last changed;
+// the flat listing lost both on the way through the grouped form.
+func TestListTransportsSQLKeepsTypeTAndChangedAt(t *testing.T) {
+	srv := &ctsServer{listing: `<?xml version="1.0"?><tm:root xmlns:tm="http://www.sap.com/cts/adt/tm"/>`, e070: `<?xml version="1.0" encoding="utf-8"?>
+<dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview">
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRKORR"/><dataPreview:dataSet><dataPreview:data>TR-EXAMPLE-7</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRFUNCTION"/><dataPreview:dataSet><dataPreview:data>T</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="TRSTATUS"/><dataPreview:dataSet><dataPreview:data>D</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="AS4DATE"/><dataPreview:dataSet><dataPreview:data>20260315</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+  <dataPreview:columns><dataPreview:metadata dataPreview:name="AS4TIME"/><dataPreview:dataSet><dataPreview:data>171004</dataPreview:data></dataPreview:dataSet></dataPreview:columns>
+</dataPreview:tableData>`}
+	client := srv.start(t)
+
+	list, err := client.ListTransports(context.Background(), "TESTUSER")
+	if err != nil {
+		t.Fatalf("ListTransports: %v", err)
+	}
+	if len(list) != 1 || list[0].Type != "T" || list[0].ChangedAt != "20260315171004" || list[0].TargetDesc == "" {
+		t.Errorf("want one T row with changedAt and targetDesc, got %+v", list)
+	}
+}
+
+// F3-02: 7.50 ignores requestType, requestStatus and the released dates and
+// answers with the user's whole tree; the listing echoed the filters as
+// applied. Type and status are applied here now, and a released window or a
+// request for transports of copies, which the tree cannot answer, goes to E070.
+func TestQueryTransportsAppliesFiltersTheTreeIgnored(t *testing.T) {
+	client := (&ctsServer{listing: treeWithProjects}).start(t)
+	ctx := context.Background()
+
+	res, err := client.QueryTransports(ctx, TransportQuery{User: "DEVELOPER", Source: TransportSourceParams, RequestTypes: "W", RequestStatuses: "D"})
+	if err != nil {
+		t.Fatalf("QueryTransports: %v", err)
+	}
+	rows := res.Flat()
+	if len(rows) != 1 || rows[0].Number != "TR-CUS-1" {
+		t.Errorf("want only the modifiable W request, got %+v", rows)
+	}
+	if !strings.Contains(strings.Join(res.Notes, "\n"), "dropped here") {
+		t.Errorf("dropping rows must be noted, got %v", res.Notes)
+	}
+
+	for _, q := range []TransportQuery{
+		{User: "DEVELOPER", RequestTypes: "T"},
+		{User: "DEVELOPER", RequestStatuses: "R", ReleasedFrom: "20260801", ReleasedTo: "20260831"},
+	} {
+		res, err := client.QueryTransports(ctx, q)
+		if err != nil {
+			t.Fatalf("QueryTransports(%+v): %v", q, err)
+		}
+		if res.Source != TransportSourceSQL {
+			t.Errorf("%+v: source = %s, want sql (notes %v)", q, res.Source, res.Notes)
+		}
+	}
+}
+
+// F3-02/F3-04 review: under --block-free-sql the E070 read fails. Auto mode
+// still answers from the tree, for a filter a 7.57 tree honours and for an
+// ordinary empty listing; only an explicit source sql reports the failure.
+func TestQueryTransportsAutoAnswersFromTreeWhenSQLIsBlocked(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		listing string
+		q       TransportQuery
+	}{
+		{treeWithProjects, TransportQuery{User: "DEVELOPER", ReleasedFrom: "20260801", ReleasedTo: "20260831"}},
+		{treeWithProjects, TransportQuery{User: "DEVELOPER", RequestTypes: "T"}},
+		{emptyTree, TransportQuery{User: "DEVELOPER"}},
+	} {
+		client := (&ctsServer{listing: tc.listing}).start(t)
+		client.config.Safety.BlockFreeSQL = true
+		res, err := client.QueryTransports(ctx, tc.q)
+		if err != nil {
+			t.Errorf("%+v: %v", tc.q, err)
+			continue
+		}
+		if res.Source != TransportSourceParams || !strings.Contains(strings.Join(res.Notes, "\n"), "blocked") {
+			t.Errorf("%+v: source = %s, want params with the E070 failure noted (notes %v)", tc.q, res.Source, res.Notes)
+		}
+	}
+
+	client := (&ctsServer{listing: treeWithProjects}).start(t)
+	client.config.Safety.BlockFreeSQL = true
+	if _, err := client.QueryTransports(ctx, TransportQuery{User: "DEVELOPER", Source: TransportSourceSQL}); err == nil {
+		t.Errorf("source sql must report the blocked E070 read")
 	}
 }

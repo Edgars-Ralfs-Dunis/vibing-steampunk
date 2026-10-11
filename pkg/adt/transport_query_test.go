@@ -2,8 +2,10 @@ package adt
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -239,7 +241,7 @@ func TestQueryTransportsAutoFallsBackToConfigThenSQL(t *testing.T) {
 	}
 
 	joined := strings.Join(res.Notes, "\n")
-	for _, want := range []string{"returned no requests", "no search configuration names user SOMEONE", "excludes released requests", "were not applied"} {
+	for _, want := range []string{"returned no requests", "no search configuration names user SOMEONE", "excludes released requests", "was not applied"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes should mention %q, got:\n%s", want, joined)
 		}
@@ -315,5 +317,50 @@ func TestSQLLetterList(t *testing.T) {
 	}
 	if got := sapLanguageKey(""); got != "E" {
 		t.Errorf("empty -> %q", got)
+	}
+}
+
+// F3-04: the SQL source stopped at 100 rows without saying so, and a failed
+// query came back as "no transport requests". Every matching row is asked for
+// now; released rows are bounded by the released window (default: the last
+// 14 days, as documented for every source).
+func TestQueryTransportsSQLReadsAllRowsInTheWindow(t *testing.T) {
+	var rowNumber, sql string
+	fail := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/datapreview/freestyle") {
+			w.Header().Set("X-CSRF-Token", "TOKEN")
+			return
+		}
+		if fail {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		rowNumber, sql = r.URL.Query().Get("rowNumber"), string(body)
+		_, _ = w.Write([]byte(e070Rows))
+	}))
+	defer srv.Close()
+	cfg := NewConfig(srv.URL, "TESTUSER", "secret")
+	cfg.Safety.EnableTransports = true
+	client := NewClientWithTransport(cfg, NewTransport(cfg))
+
+	if _, err := client.QueryTransports(context.Background(), TransportQuery{
+		User: "*", Source: TransportSourceSQL, ReleasedFrom: "20260801", ReleasedTo: "20260831",
+	}); err != nil {
+		t.Fatalf("QueryTransports: %v", err)
+	}
+	// Every row, plus the probe row RunQuery adds to tell a capped answer.
+	if rowNumber != fmt.Sprint(UnlimitedRows+1) {
+		t.Errorf("rowNumber = %s, want every row (%d) plus the probe row", rowNumber, UnlimitedRows)
+	}
+	if !strings.Contains(sql, "AS4DATE BETWEEN '20260801' AND '20260831'") {
+		t.Errorf("released window not applied:\n%s", sql)
+	}
+
+	fail = true
+	_, err := client.QueryTransports(context.Background(), TransportQuery{User: "*", Source: TransportSourceSQL})
+	if err == nil || !strings.Contains(err.Error(), "E070") {
+		t.Errorf("a failed E070 query must be an error, not an empty list; got %v", err)
 	}
 }

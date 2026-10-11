@@ -82,6 +82,31 @@ func TestParseRevisionFeed(t *testing.T) {
 	}
 }
 
+// The transport link as 7.50 sends it (ZED, 2026-10-11): rel .../transport/request,
+// type application/vnd.sap.sapgui, href into /vit/wb — no "transportrequests" anywhere.
+func TestParseRevisionFeed_Transport750(t *testing.T) {
+	feedXML := `<?xml version="1.0" encoding="UTF-8"?>
+<atom:feed xmlns:atom="http://www.w3.org/2005/Atom" xmlns:adtcore="http://www.sap.com/adt/core">
+  <atom:title>Version List of ZIF_VSP_SERVICE (INTF)</atom:title>
+  <atom:entry>
+    <atom:author><atom:name>DEVU</atom:name></atom:author>
+    <atom:content src="/sap/bc/adt/oo/interfaces/zif_vsp_service/source/main/versions/20260922101500/00002/content" type="text/plain"/>
+    <atom:id>00002</atom:id>
+    <atom:link adtcore:name="DVDK9ADPNW" href="/sap/bc/adt/vit/wb/object_type/%20%20%20%20rq/object_name/DVDK9ADPNW" rel="http://www.sap.com/adt/relations/transport/request" type="application/vnd.sap.sapgui"/>
+    <atom:title>Version 00002</atom:title>
+    <atom:updated>2026-09-22T08:15:00Z</atom:updated>
+  </atom:entry>
+</atom:feed>`
+
+	revisions, err := ParseRevisionFeed([]byte(feedXML))
+	if err != nil {
+		t.Fatalf("ParseRevisionFeed failed: %v", err)
+	}
+	if len(revisions) != 1 || revisions[0].Transport != "DVDK9ADPNW" {
+		t.Fatalf("revisions = %+v, want one entry with transport DVDK9ADPNW", revisions)
+	}
+}
+
 func TestParseRevisionFeed_Empty(t *testing.T) {
 	feedXML := `<?xml version="1.0" encoding="UTF-8"?>
 <atom:feed xmlns:atom="http://www.w3.org/2005/Atom">
@@ -149,7 +174,7 @@ func TestResolveRevisionURL(t *testing.T) {
 			objectType: "INTF",
 			objName:    "ZIF_TEST",
 			opts:       &GetSourceOptions{},
-			wantURL:    "/sap/bc/adt/oo/interfaces/ZIF_TEST/includes/main/versions",
+			wantURL:    "/sap/bc/adt/oo/interfaces/ZIF_TEST/source/main/versions",
 		},
 		{
 			name:       "FUNC",

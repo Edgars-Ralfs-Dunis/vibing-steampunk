@@ -132,3 +132,17 @@ func TestALogAfterTheDumpRanksBelowOneBefore(t *testing.T) {
 		t.Fatalf("the reason should say why it is weaker, got %q", afterWhy)
 	}
 }
+
+// A class dies as its pool, ZCL_X=====CP, and the caller has the class name.
+// Filtering on it returned no dumps at all, which reads as "no dumps".
+func TestDumpProgramFilterMatchesAClassByItsPool(t *testing.T) {
+	d := Dump{Program: "ZCL_DEMO_THING===============CP"}
+	for _, want := range []string{"zcl_demo_thing", "ZCL_DEMO_THING===============CP"} {
+		if !(DumpFilter{Program: want}).matches(d) {
+			t.Errorf("program %q did not match %s", want, d.Program)
+		}
+	}
+	if (DumpFilter{Program: "ZCL_DEMO"}).matches(d) {
+		t.Error("a prefix of the class name matched another class's pool")
+	}
+}
