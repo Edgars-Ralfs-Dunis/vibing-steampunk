@@ -111,3 +111,109 @@ func TestReferencesSaysWhenEveryRowWasAContainer(t *testing.T) {
 		t.Error("containers only is an answer, and not the same as the resource returning nothing")
 	}
 }
+
+// A table is used by structures as much as by code: on one SAP system T549A had
+// 393 references, the first fifty of them all structures. Asking for code got
+// none, and the cap was not even in the schema, so no agent could raise it.
+
+func mixedReferencesXML(structures int, classes int) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="utf-8"?><usageReferences:referenceResult><referencedObjects>`)
+	for i := 0; i < structures; i++ {
+		b.WriteString(fmt.Sprintf(
+			`<referencedObject uri="/sap/bc/adt/ddic/structures/zs_demo%d" isResult="true">`+
+				`<adtObject adtcore:name="ZS_DEMO%d" adtcore:type="TABL/DS"/></referencedObject>`, i, i))
+	}
+	for i := 0; i < classes; i++ {
+		b.WriteString(fmt.Sprintf(
+			`<referencedObject uri="/sap/bc/adt/oo/classes/zcl_demo_reader%d" isResult="true">`+
+				`<adtObject adtcore:name="ZCL_DEMO_READER%d" adtcore:type="CLAS/OC"/></referencedObject>`, i, i))
+	}
+	b.WriteString(`</referencedObjects></usageReferences:referenceResult>`)
+	return b.String()
+}
+
+func TestReferencesSchemaOffersTheCapAndATypeFilter(t *testing.T) {
+	server := NewServer(&Config{BaseURL: "https://sap.example.com:44300", Username: "u", Password: "p", Client: "001"})
+	raw := server.mcpServer.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	response, ok := raw.(mcp.JSONRPCResponse)
+	if !ok {
+		t.Fatalf("expected JSONRPCResponse, got %T", raw)
+	}
+	var tools []mcp.Tool
+	switch result := response.Result.(type) {
+	case mcp.ListToolsResult:
+		tools = result.Tools
+	case *mcp.ListToolsResult:
+		tools = result.Tools
+	}
+	for _, tool := range tools {
+		if tool.Name != "FindReferences" {
+			continue
+		}
+		for _, name := range []string{"max_results", "object_types"} {
+			if _, ok := tool.InputSchema.Properties[name]; !ok {
+				t.Errorf("an argument the handler reads but the schema hides is an argument no agent will send: %s", name)
+			}
+		}
+		return
+	}
+	t.Fatal("FindReferences is not registered")
+}
+
+func TestReferencesFiltersByTypeBeforeTheCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(mixedReferencesXML(60, 3)))
+		}
+	}))
+	defer srv.Close()
+
+	for _, filter := range []any{"CLAS", []any{"CLAS/OC"}} {
+		out := referencesAnswer(t, srv, map[string]any{
+			"object_url": "/sap/bc/adt/vit/wb/object_type/tabldt/object_name/ZT_DEMO", "object_types": filter})
+		refs, _ := out["references"].([]any)
+		if len(refs) != 3 {
+			t.Errorf("filter %v: the three classes sit behind sixty structures and must still come back, got %d", filter, len(refs))
+		}
+		if out["total"] != float64(3) || out["filtered_out"] != float64(60) {
+			t.Errorf("filter %v: total counts what matched, filtered_out what did not; got %v and %v",
+				filter, out["total"], out["filtered_out"])
+		}
+	}
+}
+
+// On a 7.50 system the where-used resource answers a DDIC table's own address
+// with a 500, "Error while converting object references", and the same table
+// under the generic workbench address with the right list.
+
+func TestReferencesRetriesATableUnderTheWorkbenchAddress(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-csrf-token", "test-token")
+		if r.Method != http.MethodPost {
+			return
+		}
+		uri := r.URL.Query().Get("uri")
+		asked = append(asked, uri)
+		if strings.HasPrefix(uri, "/sap/bc/adt/ddic/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`<exc:exception><message lang="EN">Error while converting object references</message></exc:exception>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(mixedReferencesXML(0, 2)))
+	}))
+	defer srv.Close()
+
+	out := referencesAnswer(t, srv, map[string]any{"object_url": "/sap/bc/adt/ddic/tables/zt_demo"})
+	want := "/sap/bc/adt/vit/wb/object_type/tabldt/object_name/ZT_DEMO"
+	if out["object_url_used"] != want {
+		t.Errorf("the retry must say which address answered, got %v (asked %v)", out["object_url_used"], asked)
+	}
+	if refs, _ := out["references"].([]any); len(refs) != 2 {
+		t.Errorf("the workbench address knows two callers, got %d", len(refs))
+	}
+}

@@ -1622,7 +1622,8 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("FindReferences") {
 		s.mcpServer.AddTool(mcp.NewTool("FindReferences",
-			mcp.WithDescription("Find all references to an ABAP object or symbol"),
+			mcp.WithDescription("Find all references to an ABAP object or symbol. A DDIC table's own address "+
+				"fails on 7.50 and is retried under /sap/bc/adt/vit/wb/object_type/tabldt/object_name/<TABLE>."),
 			mcp.WithString("object_url",
 				mcp.Required(),
 				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
@@ -1632,6 +1633,13 @@ func (s *Server) registerCodeIntelTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithNumber("column",
 				mcp.Description("Column number for position-based reference search (1-based, optional)"),
+			),
+			mcp.WithNumber("max_results",
+				mcp.Description("Most references to return (default 50). The answer says when it cut the list."),
+			),
+			mcp.WithString("object_types",
+				mcp.Description("Only these object types, comma-separated, e.g. \"CLAS,PROG,FUGR\" or \"CLAS/OC\". "+
+					"Applied before max_results: a table's code callers otherwise hide behind its structures."),
 			),
 		), s.handleFindReferences)
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -114,9 +115,24 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 		maxResults = int(m)
 	}
 
+	objectTypes := referenceTypeFilter(request.GetArguments()["object_types"])
+
+	usedURL := objectURL
 	results, err := s.adtClient.FindReferences(ctx, objectURL, line, column)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
+		// A 7.50 system answers a DDIC table's own address with a 500 ("Error
+		// while converting object references") and the same table under the
+		// generic workbench address with the right list. Retry once, and say so.
+		workbench, ok := workbenchAddress(objectURL)
+		if !ok {
+			return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
+		}
+		retried, retryErr := s.adtClient.FindReferences(ctx, workbench, line, column)
+		if retryErr != nil {
+			return newToolResultError(fmt.Sprintf("FindReferences failed: %v; retried as %s: %v",
+				err, workbench, retryErr)), nil
+		}
+		results, usedURL = retried, workbench
 	}
 
 	// The where-used response is a tree flattened into a list, and most of it is
@@ -128,11 +144,21 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	// Both numbers are reported rather than quietly applied. "50 of 113" and
 	// "the object has 50 references" are different answers, and a list that was
 	// cut is not a list that ended.
+	//
+	// The type filter runs before the cap. A table is used by structures as much
+	// as by code, and on one system the first fifty of T549A's 393 references
+	// were all structures: capped first, a question about code found none.
 	hits := make([]adt.UsageReference, 0, len(results))
+	filteredOut := 0
 	for _, r := range results {
-		if r.IsResult {
-			hits = append(hits, r)
+		if !r.IsResult {
+			continue
 		}
+		if !referenceTypeMatches(r.Type, objectTypes) {
+			filteredOut++
+			continue
+		}
+		hits = append(hits, r)
 	}
 
 	answer := map[string]any{
@@ -144,6 +170,13 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	}
 	if line > 0 || column > 0 {
 		answer["position"] = map[string]int{"line": line, "column": column}
+	}
+	if len(objectTypes) > 0 {
+		answer["object_types"] = objectTypes
+		answer["filtered_out"] = filteredOut
+	}
+	if usedURL != objectURL {
+		answer["object_url_used"] = usedURL
 	}
 	if len(hits) > maxResults {
 		answer["references"] = hits[:maxResults]
@@ -427,4 +460,56 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// ddicAddress matches the ADT address of a DDIC table or structure.
+var ddicAddress = regexp.MustCompile(`(?i)^/sap/bc/adt/ddic/(tables|structures)/([^/?#]+)$`)
+
+// workbenchAddress gives the generic workbench address for a DDIC table or
+// structure address, the form the where-used resource answers on every release.
+func workbenchAddress(objectURL string) (string, bool) {
+	m := ddicAddress.FindStringSubmatch(objectURL)
+	if m == nil {
+		return "", false
+	}
+	kind := map[string]string{"tables": "tabldt", "structures": "tablds"}[strings.ToLower(m[1])]
+	return "/sap/bc/adt/vit/wb/object_type/" + kind + "/object_name/" + strings.ToUpper(m[2]), true
+}
+
+// referenceTypeFilter reads object_types: a comma-separated string, as the grep
+// tools take it, or a JSON list, which agents send just as often.
+func referenceTypeFilter(arg any) []string {
+	var parts []string
+	switch v := arg.(type) {
+	case string:
+		parts = strings.Split(v, ",")
+	case []any:
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+	}
+	var types []string
+	for _, p := range parts {
+		if p = strings.ToUpper(strings.TrimSpace(p)); p != "" {
+			types = append(types, p)
+		}
+	}
+	return types
+}
+
+// referenceTypeMatches says whether an ADT type such as CLAS/OC passes the
+// filter: CLAS takes every class type, CLAS/OC only that one. No filter passes all.
+func referenceTypeMatches(kind string, filter []string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	kind = strings.ToUpper(kind)
+	for _, f := range filter {
+		if kind == f || strings.HasPrefix(kind, f+"/") {
+			return true
+		}
+	}
+	return false
 }
