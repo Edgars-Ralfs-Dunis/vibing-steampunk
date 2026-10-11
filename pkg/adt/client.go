@@ -1378,34 +1378,26 @@ type Transaction struct {
 }
 
 // GetTransaction retrieves information about a transaction.
+// It reads TSTC/TSTCT through the data preview: the vit/wb TRAN URI has no
+// mapping on 7.50 (500 "No URI-Mapping defined", upstream #232). The
+// statements stay short because the ddic preview cuts lines at 255 chars.
 func (c *Client) GetTransaction(ctx context.Context, tcode string) (*Transaction, error) {
-	tcode = strings.ToUpper(tcode)
+	tcode = strings.ToUpper(strings.TrimSpace(tcode))
 
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/TRAN/object_name/%s", tcode), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
+	res, err := c.GetTableContents(ctx, "TSTC", 1, "SELECT PGMNA FROM TSTC WHERE TCODE = '"+sqlQuote(tcode)+"'")
 	if err != nil {
 		return nil, fmt.Errorf("getting transaction: %w", err)
 	}
-
-	// Parse transaction info
-	type tranInfo struct {
-		Name        string `xml:"name,attr"`
-		Description string `xml:"description,attr"`
-		Program     string `xml:"program,attr"`
+	if len(res.Rows) == 0 {
+		return nil, fmt.Errorf("transaction %s not found (no TSTC row)", tcode)
 	}
+	tran := &Transaction{Name: tcode, Program: getString(res.Rows[0], "PGMNA")}
 
-	var ti tranInfo
-	if err := xml.Unmarshal(resp.Body, &ti); err != nil {
-		return nil, fmt.Errorf("parsing transaction: %w", err)
+	txt, err := c.GetTableContents(ctx, "TSTCT", 1, "SELECT TTEXT FROM TSTCT WHERE SPRSL = '"+sapLanguageKey(c.config.Language)+"' AND TCODE = '"+sqlQuote(tcode)+"'")
+	if err == nil && len(txt.Rows) > 0 {
+		tran.Description = getString(txt.Rows[0], "TTEXT")
 	}
-
-	return &Transaction{
-		Name:        ti.Name,
-		Description: ti.Description,
-		Program:     ti.Program,
-	}, nil
+	return tran, nil
 }
 
 // --- Type Info Operations ---
