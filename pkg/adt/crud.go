@@ -28,10 +28,22 @@ type LockResult struct {
 // objectURL is the ADT URL of the object (e.g., "/sap/bc/adt/programs/programs/ZTEST")
 // accessMode is typically "MODIFY" for editing
 func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode string) (*LockResult, error) {
-	// Safety check - only check for MODIFY locks, READ locks are safe
-	if accessMode == "" || accessMode == "MODIFY" {
+	// Safety check - only a READ lock is safe. Every other mode (MODIFY, the
+	// empty default which becomes MODIFY, or anything else SAP may accept) is
+	// checked as a lock, and refused under --read-only: a write lock serves
+	// no write there and only leaves an ENQUEUE entry in SM12. The mode is
+	// compared case-insensitively.
+	accessMode = strings.ToUpper(strings.TrimSpace(accessMode))
+	if accessMode != "READ" {
 		if err := c.checkSafety(OpLock, "LockObject"); err != nil {
 			return nil, err
+		}
+		if c.config.Safety.ReadOnly && !c.config.Safety.DryRun {
+			mode := accessMode
+			if mode == "" {
+				mode = "MODIFY"
+			}
+			return nil, fmt.Errorf("operation 'LockObject' (%s) is blocked: read-only mode enabled (only READ locks are allowed)", mode)
 		}
 	}
 
