@@ -140,6 +140,14 @@ func TestAGenericFileThatIsNothingIsAnError(t *testing.T) {
 	}
 }
 
+// The fold-in plan's two offline checks: the #237 shape parses (the fork's
+// parser overflowed the stack on it), and a plain file whose statement names
+// another program is refused rather than deployed under that name.
+func TestAPlainReportFileParsesAndAMismatchIsRefused(t *testing.T) {
+	wantObject(t, writeFixture(t, "zfoo.abap", "REPORT zfoo.\n"), ObjectTypeProgram, "ZFOO")
+	wantRefused(t, writeFixture(t, "zfoo_probe.abap", "REPORT zbar.\n"), "ZBAR", "ZFOO_PROBE")
+}
+
 // Export then import: every name ExportToFile writes must parse back as the
 // type and name it was written for.
 func TestExportedFileNamesParseBackAsTheSameObject(t *testing.T) {
