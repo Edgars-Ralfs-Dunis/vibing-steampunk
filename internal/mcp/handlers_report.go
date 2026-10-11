@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -62,12 +63,8 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
-		var p map[string]string
-		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
-		}
-		params.Params = p
+	if params.Params, err = reportParams(request.GetArguments()["params"]); err != nil {
+		return newToolResultError(err.Error()), nil
 	}
 
 	// Step 1: Schedule background job via WebSocket
@@ -131,6 +128,66 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
+// reportParams reads RunReport's params, a JSON object (or its text) whose
+// values are a PARAMETERS value or a select-option row: a string, an object
+// {"SIGN","OPTION","LOW","HIGH"}, or an array of those.
+//
+// ponytail: the deployed ZADT_VSP report service turns each value into one I/EQ
+// row and drops anything else without a word, so the report would run
+// unrestricted. Only that shape is sent; a real range is refused until the
+// service parses typed rows (RWF 6, needs a supervised ABAP redeploy).
+func reportParams(raw any) (map[string]string, error) {
+	if text, ok := raw.(string); ok {
+		if text == "" {
+			return nil, nil
+		}
+		if err := json.Unmarshal([]byte(text), &raw); err != nil {
+			return nil, fmt.Errorf("Invalid params JSON: %v", err)
+		}
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("params must be a JSON object keyed by selection-screen name")
+	}
+	out := make(map[string]string, len(obj))
+	for name, v := range obj {
+		if rows, ok := v.([]any); ok && len(rows) == 1 {
+			v = rows[0]
+		}
+		var low string
+		switch row := v.(type) {
+		case string:
+			low = row
+		case map[string]any:
+			fields := map[string]string{}
+			for k, f := range row {
+				k = strings.ToUpper(k)
+				fs, ok := f.(string)
+				if !ok || (k != "SIGN" && k != "OPTION" && k != "LOW" && k != "HIGH") {
+					return nil, fmt.Errorf("params %s: a row takes the strings SIGN, OPTION, LOW and HIGH, got %s", name, k)
+				}
+				fields[k] = fs
+			}
+			if fields["SIGN"] != "" && fields["SIGN"] != "I" || fields["OPTION"] != "" && fields["OPTION"] != "EQ" || fields["HIGH"] != "" {
+				return nil, fmt.Errorf("params %s: only a single I/EQ value can be passed until the ZADT_VSP report service is redeployed; the deployed bridge drops ranges (BT, E, HIGH, patterns) and would run the report without them", name)
+			}
+			low = fields["LOW"]
+		case []any:
+			return nil, fmt.Errorf("params %s: only a single I/EQ value can be passed until the ZADT_VSP report service is redeployed; the deployed bridge keeps one row per select-option and would drop the rest", name)
+		default:
+			return nil, fmt.Errorf("params %s: a value must be a string, a {SIGN,OPTION,LOW,HIGH} row or an array of rows", name)
+		}
+		if utf8.RuneCountInString(low) > 45 {
+			return nil, fmt.Errorf("params %s: value is %d characters, a selection-screen value holds at most 45 (RSPARAMS-LOW) and SAP would cut it", name, utf8.RuneCountInString(low))
+		}
+		out[name] = low
+	}
+	return out, nil
+}
+
 func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Ensure WebSocket is connected
 	client := bridgeClientArg(request)
@@ -156,12 +213,8 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
-		var p map[string]string
-		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
-		}
-		params.Params = p
+	if params.Params, err = reportParams(request.GetArguments()["params"]); err != nil {
+		return newToolResultError(err.Error()), nil
 	}
 
 	// Generate task ID
