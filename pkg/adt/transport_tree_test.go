@@ -236,11 +236,12 @@ func TestAs4userPredicate(t *testing.T) {
 // ctsServer answers the CTS listing with a document the old parsers could not
 // navigate, and the E070 fallback query with two rows.
 type ctsServer struct {
-	mu       sync.Mutex
-	listing  string
-	e070     string // E070 rows to answer with; e070Rows when empty
-	queries  []string
-	sqlCalls int
+	mu        sync.Mutex
+	listing   string
+	e070      string // E070 rows to answer with; e070Rows when empty
+	queries   []string
+	sqlCalls  int
+	treeCalls int
 }
 
 func (s *ctsServer) start(t *testing.T) *Client {
@@ -252,6 +253,9 @@ func (s *ctsServer) start(t *testing.T) *Client {
 			w.WriteHeader(http.StatusOK)
 
 		case strings.Contains(r.URL.Path, "/cts/transportrequests"):
+			s.mu.Lock()
+			s.treeCalls++
+			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(s.listing))
 
@@ -397,6 +401,11 @@ func TestListTransportsWildcardUser(t *testing.T) {
 	}
 	if !owners["TESTUSER"] || !owners["OTHERUSER"] {
 		t.Errorf("expected transports from more than one owner, got %v", owners)
+	}
+	// F3-06: '*' is the sql source's alone; asking the tree for every user's
+	// requests made a 7.50 system build them all until the client timed out.
+	if srv.treeCalls != 0 {
+		t.Errorf("'*' asked the organizer tree %d times", srv.treeCalls)
 	}
 }
 

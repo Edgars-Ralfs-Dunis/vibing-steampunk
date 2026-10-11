@@ -265,6 +265,11 @@ func (c *Client) queryTransports(ctx context.Context, q TransportQuery) (*Transp
 
 	// auto: first source with requests wins; a source that fails is noted
 	// and the next one is tried, so one broken path never hides the others.
+	// '*' is the sql source's alone: a 7.50 tree builds every user's requests
+	// for it, slowly enough to outlast the client timeout.
+	if q.User == "*" {
+		return c.transportsViaSQL(ctx, res)
+	}
 	if what := q.treeCannotAnswer(); what != "" {
 		res.note("a 7.50 organizer tree ignores %s; reading E070", what)
 		return c.transportsViaSQL(ctx, res)
