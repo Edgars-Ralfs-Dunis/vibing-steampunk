@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -422,6 +423,18 @@ func (s *Server) handleGetPackage(ctx context.Context, request mcp.CallToolReque
 	pkg, err := s.adtClient.GetPackage(ctx, packageName)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get package: %v", err)), nil
+	}
+	// The nodestructure is the SE80 tree, which on 7.50 does not list every
+	// TADIR type (SICF, SUSC, ...). An empty answer is checked against TADIR.
+	if len(pkg.Objects) == 0 && len(pkg.SubPackages) == 0 {
+		q := "SELECT object, obj_name FROM tadir WHERE devclass = '" + sqlLiteral(packageName) + "' AND object <> 'DEVC'"
+		if rows, qerr := s.adtClient.RunQuery(ctx, q, 50); qerr == nil && len(rows.Rows) > 0 {
+			var names []string
+			for _, r := range rows.Rows {
+				names = append(names, fmt.Sprintf("%v %v", r["OBJECT"], r["OBJ_NAME"]))
+			}
+			pkg.Note = "the package tree lists no objects, but TADIR has these (types the tree does not show): " + strings.Join(names, ", ")
+		}
 	}
 
 	result, _ := json.MarshalIndent(pkg, "", "  ")
