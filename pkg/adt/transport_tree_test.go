@@ -503,3 +503,37 @@ func TestListTransportsSQLKeepsTypeTAndChangedAt(t *testing.T) {
 		t.Errorf("want one T row with changedAt and targetDesc, got %+v", list)
 	}
 }
+
+// F3-02: 7.50 ignores requestType, requestStatus and the released dates and
+// answers with the user's whole tree; the listing echoed the filters as
+// applied. Type and status are applied here now, and a released window or a
+// request for transports of copies, which the tree cannot answer, goes to E070.
+func TestQueryTransportsAppliesFiltersTheTreeIgnored(t *testing.T) {
+	client := (&ctsServer{listing: treeWithProjects}).start(t)
+	ctx := context.Background()
+
+	res, err := client.QueryTransports(ctx, TransportQuery{User: "DEVELOPER", Source: TransportSourceParams, RequestTypes: "W", RequestStatuses: "D"})
+	if err != nil {
+		t.Fatalf("QueryTransports: %v", err)
+	}
+	rows := res.Flat()
+	if len(rows) != 1 || rows[0].Number != "TR-CUS-1" {
+		t.Errorf("want only the modifiable W request, got %+v", rows)
+	}
+	if !strings.Contains(strings.Join(res.Notes, "\n"), "dropped here") {
+		t.Errorf("dropping rows must be noted, got %v", res.Notes)
+	}
+
+	for _, q := range []TransportQuery{
+		{User: "DEVELOPER", RequestTypes: "T"},
+		{User: "DEVELOPER", RequestStatuses: "R", ReleasedFrom: "20260801", ReleasedTo: "20260831"},
+	} {
+		res, err := client.QueryTransports(ctx, q)
+		if err != nil {
+			t.Fatalf("QueryTransports(%+v): %v", q, err)
+		}
+		if res.Source != TransportSourceSQL {
+			t.Errorf("%+v: source = %s, want sql (notes %v)", q, res.Source, res.Notes)
+		}
+	}
+}

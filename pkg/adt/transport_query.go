@@ -265,6 +265,10 @@ func (c *Client) queryTransports(ctx context.Context, q TransportQuery) (*Transp
 
 	// auto: first source with requests wins; a source that fails is noted
 	// and the next one is tried, so one broken path never hides the others.
+	if what := q.treeCannotAnswer(); what != "" {
+		res.note("a 7.50 organizer tree ignores %s; reading E070", what)
+		return c.transportsViaSQL(ctx, res)
+	}
 	if r, err := c.transportsViaParams(ctx, res); err != nil {
 		res.note("organizer tree with explicit parameters failed: %v", err)
 	} else if !r.Empty() {
@@ -292,6 +296,46 @@ func (r *TransportQueryResult) note(format string, args ...any) {
 	r.Notes = append(r.Notes, fmt.Sprintf(format, args...))
 }
 
+// treeCannotAnswer names what a 7.50 organizer tree ignores and the client
+// cannot apply afterwards: it lists released requests of the last 14 days
+// whatever the window, and has no transports of copies.
+func (q TransportQuery) treeCannotAnswer() string {
+	switch {
+	case q.ReleasedFrom != "":
+		return "the released window"
+	case strings.Contains(q.RequestTypes, "T") && q.RequestTypes != DefaultTransportRequestTypes:
+		return "request type T"
+	}
+	return ""
+}
+
+// dropUnasked removes what the tree sent outside the asked types and
+// statuses: 7.50 ignores requestType and requestStatus and sends the user's
+// whole tree. Transports of copies, when a tree lists them, sit under
+// workbench.
+func (r *TransportQueryResult) dropUnasked() {
+	q := r.Query
+	dropped := 0
+	keep := func(reqs []TransportRequest, types string) []TransportRequest {
+		out := reqs[:0]
+		for _, tr := range reqs {
+			status := map[string]string{"modifiable": "D", "released": "R"}[tr.Bucket]
+			if strings.ContainsAny(q.RequestTypes, types) && (status == "" || strings.Contains(q.RequestStatuses, status)) {
+				out = append(out, tr)
+			} else {
+				dropped++
+			}
+		}
+		return out
+	}
+	r.Transports.Workbench = keep(r.Transports.Workbench, "KT")
+	r.Transports.Customizing = keep(r.Transports.Customizing, "W")
+	if dropped > 0 {
+		r.note("the organizer tree ignored request_type %s / request_status %s and sent %d other requests; they were dropped here",
+			q.RequestTypes, q.RequestStatuses, dropped)
+	}
+}
+
 // transportsViaParams asks the organizer tree with explicit parameters.
 func (c *Client) transportsViaParams(ctx context.Context, res *TransportQueryResult) (*TransportQueryResult, error) {
 	q := res.Query
@@ -312,6 +356,10 @@ func (c *Client) transportsViaParams(ctx context.Context, res *TransportQueryRes
 		return nil, err
 	}
 	res.Transports = transports
+	res.dropUnasked()
+	if what := q.treeCannotAnswer(); what != "" {
+		res.note("%s was sent, but a 7.50 organizer tree ignores it; source sql answers it exactly", what)
+	}
 	res.Source = TransportSourceParams
 	res.ConfigURI = ""
 	return res, nil
@@ -357,8 +405,8 @@ func (c *Client) transportsViaConfig(ctx context.Context, res *TransportQueryRes
 		configURI = chosen.URI
 	}
 
-	res.note("the search configuration decides request types, statuses, user and date window; "+
-		"request_type %s, request_status %s and any released window were not applied", q.RequestTypes, q.RequestStatuses)
+	res.note("the search configuration decides the user, the date window and which request types and statuses come back; "+
+		"request_type %s and request_status %s only narrow that here, and any released window was not applied", q.RequestTypes, q.RequestStatuses)
 
 	values := url.Values{}
 	values.Set("targets", boolString(q.Targets))
@@ -369,6 +417,7 @@ func (c *Client) transportsViaConfig(ctx context.Context, res *TransportQueryRes
 		return nil, err
 	}
 	res.Transports = transports
+	res.dropUnasked()
 	res.Source = TransportSourceConfig
 	res.ConfigURI = configURI
 	return res, nil

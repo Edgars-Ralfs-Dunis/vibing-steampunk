@@ -241,7 +241,7 @@ func TestQueryTransportsAutoFallsBackToConfigThenSQL(t *testing.T) {
 	}
 
 	joined := strings.Join(res.Notes, "\n")
-	for _, want := range []string{"returned no requests", "no search configuration names user SOMEONE", "excludes released requests", "were not applied"} {
+	for _, want := range []string{"returned no requests", "no search configuration names user SOMEONE", "excludes released requests", "was not applied"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes should mention %q, got:\n%s", want, joined)
 		}
