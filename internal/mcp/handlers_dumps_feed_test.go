@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,5 +84,17 @@ func TestADumpOutsideTheListingGetsUTCFromTheID(t *testing.T) {
 	}
 	if text := resultText(res); !strings.Contains(text, `"at": "2026-09-18T20:19:57Z"`) {
 		t.Errorf("want at 2026-09-18T20:19:57Z (22:19:57 CEST), got %s", text)
+	}
+}
+
+// The schema promised 100 dumps by default; the handler returns defaultDumps.
+func TestListDumpsSchemaStatesTheHandlersDefault(t *testing.T) {
+	tool, ok := serverForMode(t, "expert").mcpServer.ListTools()["ListDumps"]
+	if !ok {
+		t.Fatal("ListDumps is not registered")
+	}
+	prop, _ := tool.Tool.InputSchema.Properties["max_results"].(map[string]any)
+	if desc, _ := prop["description"].(string); !strings.Contains(desc, fmt.Sprintf("default: %d)", defaultDumps)) {
+		t.Errorf("max_results says %q, the handler defaults to %d", desc, defaultDumps)
 	}
 }
