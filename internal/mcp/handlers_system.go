@@ -37,6 +37,11 @@ func (s *Server) handleGetSystemInfo(ctx context.Context, request mcp.CallToolRe
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get system info: %v", err)), nil
 	}
+	// CVERS cannot see the database of a Suite on HANA system; take it from
+	// the HANA feature (probed, or forced by the operator) as GetFeatures does.
+	if info.DatabaseSystem == "" && s.featureProber.Probe(ctx, adt.FeatureHANA).Available {
+		info.DatabaseSystem = "HDB"
+	}
 
 	result, _ := json.MarshalIndent(info, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil

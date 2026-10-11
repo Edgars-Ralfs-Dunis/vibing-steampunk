@@ -1460,6 +1460,7 @@ type SystemInfo struct {
 	SystemID        string `json:"systemId"`
 	Client          string `json:"client"`
 	SAPRelease      string `json:"sapRelease"`
+	SupportPack     string `json:"supportPack,omitempty"` // SAP_BASIS SP level (CVERS EXTRELEASE)
 	KernelRelease   string `json:"kernelRelease,omitempty"`
 	DatabaseRelease string `json:"databaseRelease,omitempty"`
 	DatabaseSystem  string `json:"databaseSystem,omitempty"`
@@ -1503,13 +1504,11 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		row := basisResult.Rows[0]
 		info.SAPRelease = getString(row, "RELEASE")
 		info.ABAPRelease = getString(row, "RELEASE")
+		info.SupportPack = getString(row, "EXTRELEASE")
 	}
 
-	// Try to get kernel info from CVERS (optional)
-	kernelResult, err := c.RunQuery(ctx, "SELECT RELEASE FROM CVERS WHERE COMPONENT = 'SAP_ABA'", 1)
-	if err == nil && len(kernelResult.Rows) > 0 {
-		info.KernelRelease = getString(kernelResult.Rows[0], "RELEASE")
-	}
+	// KernelRelease stays empty: no SQL-readable table holds the kernel
+	// release (SAP_ABA in CVERS is a software component, not the kernel).
 
 	// Try to detect HANA from CVERS (optional)
 	hanaResult, err := c.RunQuery(ctx,

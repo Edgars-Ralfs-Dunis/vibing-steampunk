@@ -239,6 +239,10 @@ func (p *FeatureProber) probeHANA(ctx context.Context) (bool, string, error) {
 		return true, fmt.Sprintf("HANA detected: %s", info.DatabaseSystem), nil
 	}
 
+	if dbSystem == "" {
+		// CVERS cannot see the database of a Suite on HANA system.
+		return false, "database not identified (CVERS names no HANA component); force with --feature-hana on if this is HANA", nil
+	}
 	return false, fmt.Sprintf("non-HANA database: %s", info.DatabaseSystem), nil
 }
 
