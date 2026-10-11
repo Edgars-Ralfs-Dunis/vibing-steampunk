@@ -138,7 +138,9 @@ func (s *Server) handleGroupDumps(ctx context.Context, request mcp.CallToolReque
 type dumpDetailResult struct {
 	Dump   adt.Dump        `json:"dump"`
 	Detail *adt.DumpDetail `json:"detail,omitempty"`
-	Notes  []string        `json:"notes,omitempty"`
+	// Source says where Detail came from when it is not the detail resource.
+	Source string   `json:"source,omitempty"`
+	Notes  []string `json:"notes,omitempty"`
 }
 
 func (s *Server) handleGetDump(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -149,16 +151,22 @@ func (s *Server) handleGetDump(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	detail, err := s.adtClient.DumpDetail(ctx, dump.ID)
+	source := ""
 	switch {
 	case errors.Is(err, adt.ErrDumpDetailUnavailable):
 		// Not a failure and not reported as one: the feed entry is still a true
 		// and complete answer to "what dumped", and a release that serves the
-		// feed without the detail resource is a fact about the release.
+		// feed without the detail resource is a fact about the release. Its
+		// summary still names the short text and the termination point.
 		notes = append(notes, err.Error())
+		if detail = adt.DumpDetailFromSummary(dump.Summary); detail != nil {
+			detail.ID = dump.ID
+			source = "feed summary"
+		}
 	case err != nil:
 		return newToolResultError(fmt.Sprintf("Failed to get dump: %v", err)), nil
 	}
-	return newToolResultJSON(dumpDetailResult{Dump: dump, Detail: detail, Notes: notes}), nil
+	return newToolResultJSON(dumpDetailResult{Dump: dump, Detail: detail, Source: source, Notes: notes}), nil
 }
 
 type dumpExplainResult struct {

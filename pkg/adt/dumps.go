@@ -14,8 +14,9 @@ import (
 // are structured rather than prose: the error type and the program that died
 // are Atom categories, the user is the entry author, and the timestamp is the
 // publication date. So listing and grouping need no HTML parsing at all. The
-// escaped markup in the summary is the detail view, and it is the brittle part,
-// so nothing here depends on it.
+// escaped markup in the summary is the detail view, and it is the brittle part:
+// it is kept on the Dump and read only where nothing better exists
+// (DumpDetailFromSummary, on a release with no detail resource).
 
 // Dump is one runtime error.
 type Dump struct {
@@ -27,6 +28,8 @@ type Dump struct {
 	// class that died.
 	Program string `json:"program,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Summary is the entry's HTML summary, kept for DumpDetailFromSummary.
+	Summary string `json:"-"`
 }
 
 // DumpFilter narrows a dump search.
@@ -100,6 +103,7 @@ func parseDumpFeed(body []byte) ([]Dump, error) {
 		Entries []struct {
 			ID        string `xml:"id"`
 			Title     string `xml:"title"`
+			Summary   string `xml:"summary"`
 			Published string `xml:"published"`
 			Author    struct {
 				Name string `xml:"name"`
@@ -120,6 +124,7 @@ func parseDumpFeed(body []byte) ([]Dump, error) {
 			ID:      strings.TrimSpace(e.ID),
 			User:    strings.ToUpper(strings.TrimSpace(e.Author.Name)),
 			Message: strings.TrimSpace(e.Title),
+			Summary: e.Summary,
 		}
 		if at, err := time.Parse(time.RFC3339, strings.TrimSpace(e.Published)); err == nil {
 			d.At = at
