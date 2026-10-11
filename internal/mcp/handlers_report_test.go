@@ -98,3 +98,28 @@ func TestRunReportRefusesWhatTheBridgeCannotCarry(t *testing.T) {
 		})
 	}
 }
+
+// RWF 10: an aborted job came back as an ordinary result, "Status: aborted /
+// No spool output produced.", and the reason sat in the job log. It is an
+// error now, carrying whatever the bridge sends; a bridge that sends nothing
+// (the deployed one) gets told where to look.
+func TestRunReportAbortedIsAnError(t *testing.T) {
+	for name, tc := range map[string]struct{ status, want string }{
+		"with reason": {
+			`{"jobname":"ZVSP_ZR","jobcount":"12345678","status":"aborted","spool_ids":[],"joblog":["LOAD_PROGRAM_CLASS_MISMATCH"],"server":"zedai01_ZED_00"}`,
+			"LOAD_PROGRAM_CLASS_MISMATCH",
+		},
+		"deployed bridge": {
+			`{"jobname":"ZVSP_ZR","jobcount":"12345678","status":"aborted","spool_ids":[]}`,
+			"BP_JOBLOG_READ",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := fakeReportBridge(t, tc.status)
+			res, text := runReport(t, s, "")
+			if !res.IsError || !strings.Contains(text, tc.want) {
+				t.Fatalf("isError=%v, want true and %q in: %s", res.IsError, tc.want, text)
+			}
+		})
+	}
+}

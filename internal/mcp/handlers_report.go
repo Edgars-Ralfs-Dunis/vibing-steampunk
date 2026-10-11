@@ -106,7 +106,18 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	fmt.Fprintf(&sb, "%s\n", s.bridgeAttributionFor(client))
 	fmt.Fprintf(&sb, "Report: %s\n", result.Report)
 	fmt.Fprintf(&sb, "Job: %s/%s\n", result.JobName, result.JobCount)
-	fmt.Fprintf(&sb, "Status: %s\n\n", jobStatus.Status)
+	fmt.Fprintf(&sb, "Status: %s\n", jobStatus.Status)
+	if jobStatus.Server != "" {
+		fmt.Fprintf(&sb, "Server: %s\n", jobStatus.Server)
+	}
+	if jobStatus.Status == "aborted" {
+		if len(jobStatus.JobLog) > 0 {
+			fmt.Fprintf(&sb, "Job log:\n  %s\n", strings.Join(jobStatus.JobLog, "\n  "))
+		} else {
+			fmt.Fprintf(&sb, "The bridge sent no reason: read the job log with BP_JOBLOG_READ (JOBNAME %s, JOBCOUNT %s).\n", result.JobName, result.JobCount)
+		}
+	}
+	sb.WriteString("\n")
 
 	// Step 4: Get spool output if available
 	if len(jobStatus.SpoolIDs) > 0 {
@@ -125,7 +136,9 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 		sb.WriteString("No spool output produced.\n")
 	}
 
-	return mcp.NewToolResultText(sb.String()), nil
+	res := mcp.NewToolResultText(sb.String())
+	res.IsError = jobStatus.Status == "aborted"
+	return res, nil
 }
 
 // reportParams reads RunReport's params, a JSON object (or its text) whose
@@ -318,6 +331,8 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 			"job_status":   jobStatus.Status,
 			"spool_ids":    jobStatus.SpoolIDs,
 			"spool_output": spoolOutput.String(),
+			"joblog":       jobStatus.JobLog,
+			"server":       jobStatus.Server,
 		}
 		s.asyncTasksMu.Unlock()
 	}()
