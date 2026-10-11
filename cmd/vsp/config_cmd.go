@@ -814,7 +814,7 @@ func GetAllToolNames() []string {
 		"CompareSource", "CreateClassWithTests", "CreateTestInclude",
 		"CreateAndActivateProgram", "UpdateClassInclude",
 		// Code intelligence
-		"FindDefinition", "FindReferences", "CodeCompletion", "GetTypeHierarchy",
+		"FindDefinition", "FindReferences", "FieldWhereUsed", "CodeCompletion", "GetTypeHierarchy",
 		// Call graph / analysis
 		"GetCallGraph", "GetCallersOf", "GetCalleesOf", "GetObjectStructure",
 		"AnalyzeCallGraph", "CompareCallGraphs", "TraceExecution",

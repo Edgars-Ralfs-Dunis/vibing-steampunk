@@ -196,6 +196,21 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 	return mcp.NewToolResultText(string(output)), nil
 }
 
+func (s *Server) handleFieldWhereUsed(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	table, _ := request.GetArguments()["table"].(string)
+	field, _ := request.GetArguments()["field"].(string)
+	maxResults := 0
+	if m, ok := request.GetArguments()["max_results"].(float64); ok {
+		maxResults = int(m)
+	}
+	result, err := s.adtClient.FieldWhereUsed(ctx, table, field, maxResults)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("FieldWhereUsed failed: %v", err)), nil
+	}
+	output, _ := json.Marshal(result)
+	return mcp.NewToolResultText(string(output)), nil
+}
+
 func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	sourceURL, ok := request.GetArguments()["source_url"].(string)
 	if !ok || sourceURL == "" {
