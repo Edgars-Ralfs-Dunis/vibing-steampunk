@@ -350,8 +350,9 @@ func TestQueryTransportsSQLReadsAllRowsInTheWindow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("QueryTransports: %v", err)
 	}
-	if rowNumber != fmt.Sprint(UnlimitedRows) {
-		t.Errorf("rowNumber = %s, want every row (%d)", rowNumber, UnlimitedRows)
+	// Every row, plus the probe row RunQuery adds to tell a capped answer.
+	if rowNumber != fmt.Sprint(UnlimitedRows+1) {
+		t.Errorf("rowNumber = %s, want every row (%d) plus the probe row", rowNumber, UnlimitedRows)
 	}
 	if !strings.Contains(sql, "AS4DATE BETWEEN '20260801' AND '20260831'") {
 		t.Errorf("released window not applied:\n%s", sql)
