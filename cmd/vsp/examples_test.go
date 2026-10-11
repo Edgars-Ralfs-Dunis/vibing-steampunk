@@ -93,6 +93,9 @@ func examplesAgainst(t *testing.T, srv *httptest.Server) {
 	t.Setenv("SAP_PASSWORD", "secret")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("VSP_CACHE", "false")
+	// The fork's keychain client cert would replace basic auth for the stub.
+	t.Setenv("SAP_CLIENT_CERT_CN", "")
+	t.Setenv("SAP_CLIENT_CERT_ISSUER", "")
 	t.Chdir(t.TempDir())
 	saved := systemName
 	systemName = ""
